@@ -1,0 +1,197 @@
+{
+  "spec": "spec/features/coordinator/spec.md",
+  "commit": "f00f2dc7dffce9b7603a48d72ad76a337797944d",
+  "branch": "main",
+  "slices": [
+    {
+      "id": "S1",
+      "kind": "prefactor",
+      "title": "Put a fake claude and gh on PATH in verify and tests",
+      "behaviours": [],
+      "seam": "The fake `claude` and `gh`",
+      "blocked_by": [],
+      "autonomy": "afk",
+      "scope": "Adds a scripted fake `claude` and fake `gh` in the verify skill folder, each with a way to pick its scripted behaviour (write files, commit with trailers, exit codes, permission denials, tool call counts, a last message, hanging). Teaches the verify helper to put the fakes first on PATH, commit setup files and add a bare remote; gives the Node test harness the same fakes. Leaves faber's CLI and src/ alone.",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: a started repo can commit a setup file and has a bare remote it can push to",
+          "verify: the fake `claude` and fake `gh` are found first on PATH inside a run and follow the picked script"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S2",
+      "kind": "feature",
+      "title": "Refuse runs that cannot start",
+      "behaviours": [1, 2, 3, 4],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S1"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: `faber run` with no slug prints a usage line naming `faber run <slug>` and exits 1",
+          "verify: a run outside git exits non-zero, starts no fake session, says so, and leaves the folder unchanged",
+          "verify: a run with a dirty tree exits non-zero, starts no fake session, lists the dirty paths, and leaves the repo unchanged",
+          "verify: a run with no `spec/features/<slug>/decisions.md` committed on the default branch exits non-zero, starts no fake session, says so, and leaves the repo unchanged",
+          "docs/manual/ has a `run` feature file describing these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S3",
+      "kind": "feature",
+      "title": "Write and commit the spec in a run folder",
+      "behaviours": [5, 6, 7],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S2"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: from a committed decisions.md, a run switches to `slices/<slug>`, creating it from the default branch, and its first printed line is `.scratch/faber/<slug>/<timestamp>/`",
+          "verify: the run starts a fake write-spec session through `claude -p \"/write-spec ...\"` with stream-json, verbose, auto permission mode and stdin closed",
+          "verify: when the fake writes only spec.md, faber commits only that file as `Write the spec for <slug>` and pushes it to the bare remote",
+          "verify: each session prints one start and one end line, and the run folder holds run.log matching the printed lines and one .jsonl per session",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S4",
+      "kind": "feature",
+      "title": "Cut the slices and stop on a stray path",
+      "behaviours": [8, 9, 15],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S3"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: with spec.md committed, the run starts a fake write-slices session; when it writes only slices.json, faber commits only that file as `Cut <slug> into slices` and pushes it to the bare remote",
+          "verify: a fake planning session that also writes a stray file stops with `stopped: <phase> touched <path>`, nothing new is committed, and the tree is left as it is",
+          "verify: a fake planning session that writes nothing stops the run and nothing new is committed",
+          "verify: every stop prints the fake's last message, ends with one `stopped: ...` line, and exits non-zero",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S5",
+      "kind": "feature",
+      "title": "Build ready slices until one commits nothing",
+      "behaviours": [10, 11, 13],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S4"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: with both planning files committed, the run starts one fake implement-slice session at a time while trailers on `<default>..HEAD` show a ready slice",
+          "verify: a fake session adding a `Slice:` trailer continues the run to the next ready slice",
+          "verify: a fake implement-slice session adding no trailer stops with `stopped: <id> committed nothing`, the fake's last message, and a non-zero exit",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S6",
+      "kind": "feature",
+      "title": "Continue past pending sign-offs and list them",
+      "behaviours": [12],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S5"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: a fake session adding `Slice-Pending:` continues with an independent ready slice, and the run ends with `stopped: <id> waits for sign-off` listing every pending slice and a non-zero exit",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S7",
+      "kind": "feature",
+      "title": "Stop on exit code, denial, timeout and tool cap",
+      "behaviours": [14],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S4"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: a fake session exiting non-zero stops with `stopped: <session> exited <code>`, the fake's last message, and a non-zero exit",
+          "verify: a fake session reporting a permission denial stops with `stopped: <session> hit a permission denial`",
+          "verify: a fake session outliving `--timeout 0.05` is killed and stops with `stopped: <session> ran past <n> minutes`",
+          "verify: a fake session passing `--max-tools 3` is killed and stops with `stopped: <session> passed <n> tool calls`",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S8",
+      "kind": "feature",
+      "title": "Stop cleanly on Ctrl-C or a closed terminal",
+      "behaviours": [17],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S4"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: interrupting a run kills the fake session, leaves the tree, and prints `stopped: interrupted`",
+          "verify: hanging up a run kills the fake session and prints `stopped: interrupted`",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S9",
+      "kind": "feature",
+      "title": "Resume from git on rerun and never retry",
+      "behaviours": [18, 19],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S5"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: after a stop, a rerun with a fake that now commits resumes at the stopped step and repeats no phase or slice git records",
+          "verify: after a sign-off committed by hand, a rerun continues past the signed-off slice",
+          "verify: a stopped session is started exactly once per run, with no retry",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S10",
+      "kind": "feature",
+      "title": "Close the branch and print the ready PR",
+      "behaviours": [16],
+      "seam": ".agents/skills/verify/verify.ts:280",
+      "blocked_by": ["S5"],
+      "autonomy": "hitl",
+      "done": {
+        "automated": [
+          "pnpm check passes",
+          "verify: with every slice done, a closing fake implement-slice session runs, the fake `gh` reports a ready PR, and the run ends with `done: PR ready <url>` and exit 0",
+          "docs/manual/ run feature file describes these steps, and the verify run's evidence.md has no failed check"
+        ],
+        "manual": [
+          "The owner runs `faber run` on a small real feature, such as ping, through to a ready PR"
+        ]
+      }
+    }
+  ]
+}
