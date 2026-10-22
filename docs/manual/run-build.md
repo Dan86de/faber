@@ -36,6 +36,6 @@ Run `show <run> build/<run folder>run.log`, with the folder that run printed fir
 - Only a `Slice:` trailer for the slice the session was started for counts; a commit without it, or with another slice's id, is `committed nothing`.
 - faber never commits or pushes for a slice; implement-slice does both itself.
 - A session that exits non-zero stops the run with `stopped: <id> exited <code>`.
-- A session that adds `Slice-Pending:` for its slice stops the run with `stopped: <id> waits for sign-off`.
+- A session that adds `Slice-Pending:` for its slice goes on to the next ready slice; see [Go on past a sign-off](./run-signoff.md).
 - A slices file faber cannot read stops the run before any session with `stopped: spec/features/<slug>/slices.json <problem>`, such as `lists no slices` or `is not JSON`; slices whose blockers never finish stop it with `stopped: no slice is ready`, after one `| <id> waits for <ids>` line each.
 - Until faber can close the branch, a run whose every slice is done ends with `stopped: closing the branch is not built yet` and exit 1.

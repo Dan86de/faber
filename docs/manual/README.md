@@ -45,4 +45,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Write the spec](./run-spec.md): `faber run <slug>` from a committed decision record runs write-spec headless on `slices/<slug>`, commits and pushes only `spec.md`, and keeps a run folder.
 - [Cut the slices](./run-slices.md): `faber run <slug>` with a committed spec runs write-slices headless, commits and pushes only `slices.json`, and stops on a stray path or nothing written.
 - [Build the slices](./run-build.md): `faber run <slug>` with both planning files committed runs one implement-slice session per ready slice while each adds its `Slice:` trailer, and stops on a slice that commits nothing.
+- [Go on past a sign-off](./run-signoff.md): `faber run <slug>` goes on past a slice that adds `Slice-Pending:` with every slice that does not depend on it, and ends listing every slice that waits for sign-off.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

@@ -493,13 +493,44 @@ test("faber run stops when a slice session exits non-zero", (t) => {
   assert.equal(f.calls("claude").length, 1);
 });
 
-test("faber run stops at a slice that waits for sign-off", (t) => {
+test("faber run goes on past a slice that waits for sign-off with what does not depend on it", (t) => {
   const f = fakes(t);
   const { repo } = builtRepo(t);
-  f.script("claude", [builds("S1", "Slice-Pending: S1")]);
+  f.script("claude", [builds("S1", "Slice-Pending: S1"), builds("S10")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.stderr, "");
+  assert.deepEqual(result.stdout.split("\n").slice(2), [
+    "S1: started",
+    "S1: ended, exit 0, 1 tool call",
+    "S10: started",
+    "S10: ended, exit 0, 1 tool call",
+    "stopped: S1 waits for sign-off",
+    "",
+  ]);
+  assert.equal(result.status, 1);
+  assert.deepEqual(
+    f.calls("claude").map((call) => call.argv[1]),
+    ["S1", "S10"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`),
+  );
+});
+
+test("faber run ends listing every slice the run left waiting for sign-off", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S1", "Slice-Pending: S1"), builds("S10", "Slice-Pending: S10")]);
   const result = runFaberWithFakes(f, repo, "run", "demo");
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /\nstopped: S1 waits for sign-off\n$/);
+  assert.match(result.stdout, /\nS10: ended, exit 0, 1 tool call\nstopped: S1, S10 wait for sign-off\n$/);
+  assert.equal(f.calls("claude").length, 2);
+});
+
+test("faber run counts a sign-off trailer for another slice as committing nothing", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S1", "Slice-Pending: S10")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: S1 committed nothing\n$/);
   assert.equal(f.calls("claude").length, 1);
 });
 

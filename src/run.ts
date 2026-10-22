@@ -122,7 +122,8 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
   if (stopped !== undefined) return stopped;
 
   // Each slice runs in its own implement-slice session, picked from the trailers on the branch the way the skill
-  // picks it; the trailers it adds, never its reply, decide whether the run goes on.
+  // picks it; the trailers it adds, never its reply, decide whether the run goes on. A slice that waits for sign-off
+  // goes on too, with whatever does not depend on it, and the run ends listing it.
   const slicesFile = `${feature}/slices.json`;
   const parsed = parseSlices(committedText(root, "HEAD", slicesFile) ?? "");
   if ("problem" in parsed) return stop(`${slicesFile} ${parsed.problem}`);
@@ -137,11 +138,7 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     if (session.exit !== 0) return stop(`${id} exited ${session.exit}`, session.lastMessage);
     const after = sliceTrailers(root, base.ref);
     if ("error" in after) return stop(after.error, session.lastMessage);
-    if (!after.done.has(id)) {
-      // Going on past a pending sign-off lands in a later slice; until then the run stops at it.
-      const reason = after.pending.has(id) ? "waits for sign-off" : "committed nothing";
-      return stop(`${id} ${reason}`, session.lastMessage);
-    }
+    if (!after.done.has(id) && !after.pending.has(id)) return stop(`${id} committed nothing`, session.lastMessage);
     trailers = after;
   }
   const left = waiting(parsed.slices, trailers.done, trailers.pending);
