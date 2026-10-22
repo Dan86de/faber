@@ -37,3 +37,4 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Usage](./usage.md): what faber prints with no command, when asked for help, and for a command it does not know.
 - [Init](./init.md): the project files `faber init` creates in an empty repo, and that it commits nothing.
 - [Run init again](./rerun.md): a second run keeps every file byte for byte, and `.gitignore` gets `.scratch/` once.
+- [Respect existing files](./existing-files.md): older standards and glossary files are kept as fallbacks, and a `CLAUDE.md` without `@AGENTS.md` gets a warning.

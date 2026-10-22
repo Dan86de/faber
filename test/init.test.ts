@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { git, runFaber, tempRepo } from "./faber.ts";
@@ -129,4 +129,79 @@ test("faber init keeps a .gitignore with Windows line endings that already ignor
   const result = runFaber(repo, "init");
   assert.ok(result.stdout.includes("kept .gitignore\n"), result.stdout);
   assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), "node_modules/\r\n.scratch/\r\n");
+});
+
+test("faber init keeps CODING_STANDARDS.md as the fallback and creates no .agents/coding-standards.md", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, "CODING_STANDARDS.md"), "# Ours\n");
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes("\nkept CODING_STANDARDS.md (fallback)\n"), result.stdout);
+  assert.ok(!result.stdout.includes(".agents/coding-standards.md\n"), result.stdout);
+  assert.ok(!existsSync(join(repo, ".agents")), "no .agents folder");
+  assert.equal(readFileSync(join(repo, "CODING_STANDARDS.md"), "utf8"), "# Ours\n");
+});
+
+for (const fallback of ["GLOSSARY.md", "CONTEXT.md"]) {
+  test(`faber init keeps ${fallback} as the fallback and creates no spec/glossary.md`, (t) => {
+    const repo = tempRepo(t);
+    writeFileSync(join(repo, fallback), "# Ours\n");
+    const result = runFaber(repo, "init");
+    assert.equal(result.status, 0);
+    assert.ok(result.stdout.includes(`\nkept ${fallback} (fallback)\n`), result.stdout);
+    assert.ok(!existsSync(join(repo, "spec/glossary.md")), "no spec/glossary.md");
+    assert.ok(existsSync(join(repo, "spec/vision.md")), "spec/vision.md is still created");
+  });
+}
+
+test("faber init keeps an existing home path even when a fallback exists too", (t) => {
+  const repo = tempRepo(t);
+  mkdirSync(join(repo, "spec"));
+  writeFileSync(join(repo, "spec/glossary.md"), "# Home\n");
+  writeFileSync(join(repo, "GLOSSARY.md"), "# Fallback\n");
+  const result = runFaber(repo, "init");
+  assert.ok(result.stdout.includes("\nkept spec/glossary.md\n"), result.stdout);
+  assert.ok(!result.stdout.includes("(fallback)"), result.stdout);
+});
+
+test("faber init warns about a CLAUDE.md without @AGENTS.md and leaves it unchanged", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, "CLAUDE.md"), "# Mine\n");
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes("\nkept CLAUDE.md\nwarn CLAUDE.md does not import @AGENTS.md\n"), result.stdout);
+  assert.equal(readFileSync(join(repo, "CLAUDE.md"), "utf8"), "# Mine\n");
+});
+
+test("faber init does not warn about a CLAUDE.md that imports AGENTS.md", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, "CLAUDE.md"), "# Mine\n\nSee @AGENTS.md for the rules.\n");
+  const result = runFaber(repo, "init");
+  assert.ok(result.stdout.includes("\nkept CLAUDE.md\n"), result.stdout);
+  assert.ok(!result.stdout.includes("warn"), result.stdout);
+});
+
+test("faber init does not warn about a CLAUDE.md that links to AGENTS.md", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, "AGENTS.md"), "# Shared\n");
+  symlinkSync("AGENTS.md", join(repo, "CLAUDE.md"));
+  const result = runFaber(repo, "init");
+  assert.ok(result.stdout.includes("\nkept CLAUDE.md\n"), result.stdout);
+  assert.ok(!result.stdout.includes("warn"), result.stdout);
+});
+
+test("faber init does not warn about a CLAUDE.md that imports ./AGENTS.md on its last line", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, "CLAUDE.md"), "# Mine\n@./AGENTS.md");
+  const result = runFaber(repo, "init");
+  assert.ok(result.stdout.includes("\nkept CLAUDE.md\n"), result.stdout);
+  assert.ok(!result.stdout.includes("warn"), result.stdout);
+});
+
+test("faber init keeps a dangling CLAUDE.md link and warns instead of failing", (t) => {
+  const repo = tempRepo(t);
+  symlinkSync("missing.md", join(repo, "CLAUDE.md"));
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes("\nkept CLAUDE.md\nwarn CLAUDE.md does not import @AGENTS.md\n"), result.stdout);
 });
