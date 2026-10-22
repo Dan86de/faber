@@ -11,9 +11,16 @@
   "bin": {
     "faber": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "templates"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "biome check && tsc --noEmit && node --test \"test/**/*.test.ts\""
+    "prepack": "npm run build",
+    "check": "biome check && tsc --noEmit && node --test \"test/**/*.test.ts\"",
+    "changeset": "changeset",
+    "release": "sh scripts/release.sh"
   },
   "engines": {
     "node": ">=24"
@@ -21,7 +28,12 @@
   "packageManager": "pnpm@12.1.0",
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@changesets/cli": "2.31.1",
     "@types/node": "24.19.2",
     "typescript": "7.0.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

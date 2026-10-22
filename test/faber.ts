@@ -17,6 +17,9 @@ export const projectFiles = [
   ".gitignore",
 ];
 
+// The line that ends every init run that got as far as writing.
+export const nextLine = "next: fill spec/vision.md and .agents/coding-standards.md, then commit";
+
 export type RunResult = { status: number | null; stdout: string; stderr: string };
 
 // Git never looks at or above the system temp folder, so a temp folder is outside any repo wherever it lives.
@@ -38,16 +41,21 @@ export function tempRepo(t: TestContext): string {
 }
 
 export function runFaber(cwd: string, ...args: string[]): RunResult {
-  return spawnFaber(cwd, isolatedEnv(cwd), args);
+  return spawnIsolated(process.execPath, [cli, ...args], cwd, isolatedEnv(cwd));
 }
 
 // Runs faber with no git on PATH; node itself is found by its absolute path.
 export function runFaberWithoutGit(cwd: string, ...args: string[]): RunResult {
-  return spawnFaber(cwd, { ...isolatedEnv(cwd), PATH: "" }, args);
+  return spawnIsolated(process.execPath, [cli, ...args], cwd, { ...isolatedEnv(cwd), PATH: "" });
 }
 
-function spawnFaber(cwd: string, env: NodeJS.ProcessEnv, args: string[]): RunResult {
-  const child = spawnSync(process.execPath, [cli, ...args], {
+// Runs an installed faber executable, such as `node_modules/.bin/faber`, with the same isolation.
+export function runInstalledFaber(bin: string, cwd: string, ...args: string[]): RunResult {
+  return spawnIsolated(bin, args, cwd, isolatedEnv(cwd));
+}
+
+function spawnIsolated(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): RunResult {
+  const child = spawnSync(command, args, {
     cwd,
     env,
     encoding: "utf8",

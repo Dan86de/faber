@@ -2,17 +2,14 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
-import { git, projectFiles, runFaber, tempRepo } from "./faber.ts";
+import { git, nextLine, projectFiles, runFaber, tempRepo } from "./faber.ts";
 
 test("faber init in an empty repo creates every project file and ends with the next line", (t) => {
   const repo = tempRepo(t);
   const result = runFaber(repo, "init");
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "");
-  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
-    ...projectFiles.map((path) => `created ${path}`),
-    "next: fill spec/vision.md and .agents/coding-standards.md, then commit",
-  ]);
+  assert.deepEqual(result.stdout.trimEnd().split("\n"), [...projectFiles.map((path) => `created ${path}`), nextLine]);
   for (const path of projectFiles) assert.ok(existsSync(join(repo, path)), `${path} exists`);
 });
 
@@ -64,10 +61,7 @@ test("a second faber init prints only kept lines and leaves every file byte-iden
   const before = projectFiles.map((path) => readFileSync(join(repo, path)));
   const result = runFaber(repo, "init");
   assert.equal(result.status, 0);
-  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
-    ...projectFiles.map((path) => `kept ${path}`),
-    "next: fill spec/vision.md and .agents/coding-standards.md, then commit",
-  ]);
+  assert.deepEqual(result.stdout.trimEnd().split("\n"), [...projectFiles.map((path) => `kept ${path}`), nextLine]);
   projectFiles.forEach((path, i) => {
     assert.ok(readFileSync(join(repo, path)).equals(before[i] ?? Buffer.alloc(0)), `${path} is byte-identical`);
   });
