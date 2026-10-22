@@ -35,3 +35,4 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 ## Features
 
 - [Usage](./usage.md): what faber prints with no command, when asked for help, and for a command it does not know.
+- [Init](./init.md): the project files `faber init` creates in an empty repo, and that it commits nothing.

@@ -7,18 +7,18 @@ import type { TestContext } from "node:test";
 
 const cli = resolve(import.meta.dirname, "../src/cli.ts");
 
-export type FaberResult = { status: number | null; stdout: string; stderr: string };
+export type RunResult = { status: number | null; stdout: string; stderr: string };
 
 // A git repo with no commits in a temp folder, removed when the test ends.
 export function tempRepo(t: TestContext): string {
   const root = mkdtempSync(join(tmpdir(), "faber-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const init = spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root, env: isolatedEnv(root), encoding: "utf8" });
+  const init = git(root, "init", "-q", "-b", "main");
   if (init.status !== 0) throw new Error(`git init failed: ${init.stderr}`);
   return root;
 }
 
-export function runFaber(cwd: string, ...args: string[]): FaberResult {
+export function runFaber(cwd: string, ...args: string[]): RunResult {
   const child = spawnSync(process.execPath, [cli, ...args], {
     cwd,
     env: isolatedEnv(cwd),
@@ -28,6 +28,12 @@ export function runFaber(cwd: string, ...args: string[]): FaberResult {
     input: "",
   });
   if (child.error) throw child.error;
+  return { status: child.status, stdout: child.stdout, stderr: child.stderr };
+}
+
+// Runs git in a temp repo with the same isolated environment the CLI gets.
+export function git(repo: string, ...args: string[]): RunResult {
+  const child = spawnSync("git", args, { cwd: repo, env: isolatedEnv(repo), encoding: "utf8" });
   return { status: child.status, stdout: child.stdout, stderr: child.stderr };
 }
 
