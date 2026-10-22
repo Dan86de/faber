@@ -16,6 +16,8 @@ In this checkout it runs as `node src/cli.ts`.
 
 - `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir` and `show` are helper commands too.
 - Make the files a step expects to exist with `write`, and the folders with `mkdir`, before running faber.
+- Commit the files a step expects to be committed with `commit`, and give a repo a bare `origin` with `remote`; both are helper commands.
+- faber reaches Claude Code and GitHub only through the run's fake `claude` and `gh`: pick what each does with `script` before the step, and read what faber started with `calls`.
 - Each feature file names a `show` after every step that might write; it lists every file with its hash, the commit count, and what is staged. Run exactly the `show`s the file names.
 - Every step and every `Behind it` line is a check; an entry point with no step of its own is not driven.
 - Quoted output is how the output starts; `[stderr]` marks a line faber printed to stderr.
