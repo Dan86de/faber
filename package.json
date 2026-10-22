@@ -1,0 +1,14 @@
+{
+  "name": "faber",
+  "version": "0.1.0",
+  "description": "The harness that runs Dan86de/skills unattended",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Dan86de/faber"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  }
+}
