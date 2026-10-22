@@ -3,16 +3,19 @@ import { join } from "node:path";
 import {
   commitPath,
   committedAt,
+  committedText,
   defaultBranch,
   dirtyPaths,
   gitRoot,
   headCommit,
   isIgnored,
   pushBranch,
+  sliceTrailers,
   switchBranch,
   touchedSince,
 } from "./git.ts";
-import { runSession } from "./harness/claude.ts";
+import { runSession, type SessionResult } from "./harness/claude.ts";
+import { nextReady, parseSlices, waiting } from "./slices.ts";
 
 export const runUsage = "usage: faber run <slug>";
 
@@ -76,20 +79,26 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     return 1;
   };
 
+  // Runs one headless session named `name`, printing its start and end lines and keeping its stream as `<name>.jsonl`.
+  const start = async (name: string, skill: string, input: string): Promise<SessionResult> => {
+    say(`${name}: started`);
+    const session = await runSession({
+      skill,
+      args: input,
+      cwd: root,
+      transcript: join(root, folder, `${name}.jsonl`),
+    });
+    say(`${name}: ended, exit ${session.exit}, ${session.tools} tool call${session.tools === 1 ? "" : "s"}`);
+    return session;
+  };
+
   // A planning phase runs while its file is not committed on the branch; faber commits only that file, since the
   // skill leaves the commit to a user who is not there, and stops on anything else the session touched. It returns
   // the stop's exit code, or undefined when the run goes on, whether the phase ran or git already records it.
   const plan = async (phase: string, input: string, file: string, subject: string) => {
     if (committedAt(root, "HEAD", file)) return undefined;
     const before = headCommit(root);
-    say(`${phase}: started`);
-    const session = await runSession({
-      skill: phase,
-      args: input,
-      cwd: root,
-      transcript: join(root, folder, `${phase}.jsonl`),
-    });
-    say(`${phase}: ended, exit ${session.exit}, ${session.tools} tool call${session.tools === 1 ? "" : "s"}`);
+    const session = await start(phase, phase, input);
     if (session.exit !== 0) return stop(`${phase} exited ${session.exit}`, session.lastMessage);
     const touched = touchedSince(root, before);
     if ("error" in touched) return stop(touched.error, session.lastMessage);
@@ -111,8 +120,41 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     (await plan("write-spec", `${feature}/decisions.md`, spec, `Write the spec for ${slug}`)) ??
     (await plan("write-slices", spec, `${feature}/slices.json`, `Cut ${slug} into slices`));
   if (stopped !== undefined) return stopped;
-  // Building the slices lands in the next slice; until then a run with both planning files stops here.
-  return stop("implement-slice is not built yet");
+
+  // Each slice runs in its own implement-slice session, picked from the trailers on the branch the way the skill
+  // picks it; the trailers it adds, never its reply, decide whether the run goes on.
+  const slicesFile = `${feature}/slices.json`;
+  const parsed = parseSlices(committedText(root, "HEAD", slicesFile) ?? "");
+  if ("problem" in parsed) return stop(`${slicesFile} ${parsed.problem}`);
+  let trailers = sliceTrailers(root, base.ref);
+  if ("error" in trailers) return stop(trailers.error);
+  for (
+    let id = nextReady(parsed.slices, trailers.done, trailers.pending);
+    id !== undefined;
+    id = nextReady(parsed.slices, trailers.done, trailers.pending)
+  ) {
+    const session = await start(id, "implement-slice", `${slicesFile} ${id}`);
+    if (session.exit !== 0) return stop(`${id} exited ${session.exit}`, session.lastMessage);
+    const after = sliceTrailers(root, base.ref);
+    if ("error" in after) return stop(after.error, session.lastMessage);
+    if (!after.done.has(id)) {
+      // Going on past a pending sign-off lands in a later slice; until then the run stops at it.
+      const reason = after.pending.has(id) ? "waits for sign-off" : "committed nothing";
+      return stop(`${id} ${reason}`, session.lastMessage);
+    }
+    trailers = after;
+  }
+  const left = waiting(parsed.slices, trailers.done, trailers.pending);
+  const pending = left.filter(({ pending }) => pending).map(({ id }) => id);
+  if (pending.length > 0) {
+    return stop(`${pending.join(", ")} ${pending.length === 1 ? "waits" : "wait"} for sign-off`);
+  }
+  if (left.length > 0) {
+    const blocked = left.map(({ id, openBlockers }) => `${id} waits for ${openBlockers.join(", ")}`);
+    return stop(["no slice is ready", ...blocked].join("\n"));
+  }
+  // Closing the branch lands in a later slice; until then a run with every slice done stops here.
+  return stop("closing the branch is not built yet");
 }
 
 // Makes `<runs><timestamp>/` in UTC, with a counter when two runs start in the same second, and returns it.

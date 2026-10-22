@@ -176,7 +176,7 @@ test("faber run writes the spec in a session, then commits and pushes only spec.
     "write-slices: ended, exit 0, 1 tool call",
     "committed spec/features/demo/slices.json",
     "pushed slices/demo",
-    "stopped: implement-slice is not built yet",
+    "stopped: spec/features/demo/slices.json lists no slices",
     "",
   ]);
   assert.equal(result.status, 1);
@@ -225,7 +225,7 @@ test("faber run switches to an existing slices branch and skips committed planni
   const result = runFaberWithFakes(f, repo, "run", "demo");
   assert.deepEqual(result.stdout.split("\n").slice(1), [
     "on slices/demo",
-    "stopped: implement-slice is not built yet",
+    "stopped: spec/features/demo/slices.json lists no slices",
     "",
   ]);
   assert.equal(f.calls("claude").length, 0);
@@ -318,7 +318,7 @@ test("faber run cuts the slices from a committed spec, then commits and pushes o
     "write-slices: ended, exit 0, 3 tool calls",
     "committed spec/features/demo/slices.json",
     "pushed slices/demo",
-    "stopped: implement-slice is not built yet",
+    "stopped: spec/features/demo/slices.json lists no slices",
     "",
   ]);
   assert.deepEqual(
@@ -374,4 +374,176 @@ test("faber run stops when write-slices commits on its own", (t) => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\nstopped: write-slices committed on its own\n$/);
   assert.notEqual(git(repo, "rev-parse", "HEAD").stdout, before);
+});
+
+// Three slices: S2 waits for S1, S10 for nothing, so the run builds S1, S2, then S10.
+const threeSlices = JSON.stringify({
+  slices: [
+    { id: "S1", blocked_by: [] },
+    { id: "S2", blocked_by: ["S1"] },
+    { id: "S10", blocked_by: [] },
+  ],
+});
+
+// A ready repo on `slices/demo` with the spec and `slices` committed, pushed, so the next run builds slices.
+function builtRepo(t: Parameters<typeof tempRepo>[0], slices = threeSlices) {
+  const ready = readyRepo(t);
+  git(ready.repo, "switch", "-q", "-c", "slices/demo");
+  put(ready.repo, "spec/features/demo/spec.md", "# Spec\n");
+  commitAll(ready.repo, "Write the spec for demo");
+  put(ready.repo, "spec/features/demo/slices.json", `${slices}\n`);
+  commitAll(ready.repo, "Cut demo into slices");
+  git(ready.repo, "push", "-q", "-u", "origin", "slices/demo");
+  return ready;
+}
+
+// A fake implement-slice session that builds `id` and commits it with `trailer`.
+function builds(id: string, trailer = `Slice: ${id}`) {
+  return { write: { [`${id}.txt`]: `${id}\n` }, commit: { message: `Build ${id}`, trailers: [trailer] }, tools: 1 };
+}
+
+test("faber run builds each ready slice in its own session while a Slice trailer lands", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S1"), builds("S2"), builds("S10")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.stderr, "");
+  const lines = result.stdout.split("\n");
+  const folder = lines[0] as string;
+  assert.deepEqual(lines.slice(1), [
+    "on slices/demo",
+    "S1: started",
+    "S1: ended, exit 0, 1 tool call",
+    "S2: started",
+    "S2: ended, exit 0, 1 tool call",
+    "S10: started",
+    "S10: ended, exit 0, 1 tool call",
+    "stopped: closing the branch is not built yet",
+    "",
+  ]);
+  assert.equal(result.status, 1);
+  const calls = f.calls("claude");
+  assert.deepEqual(
+    calls.map((call) => call.argv[1]),
+    ["S1", "S2", "S10"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`),
+  );
+  for (const call of calls) assert.equal(call.stdin, "closed");
+  assert.equal(git(repo, "log", "--format=%s", "-3").stdout, "Build S10\nBuild S2\nBuild S1\n");
+  assert.deepEqual(readdirSync(join(repo, folder)).sort(), ["S1.jsonl", "S10.jsonl", "S2.jsonl", "run.log"]);
+  assert.equal(readFileSync(join(repo, folder, "run.log"), "utf8"), result.stdout);
+});
+
+test("faber run stops when a slice session adds no trailer, and starts no other slice", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  const before = git(repo, "rev-parse", "HEAD").stdout;
+  f.script("claude", [{ write: { "half.txt": "half\n" }, message: "The gate failed.\nLeft the diff." }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  const lines = result.stdout.trimEnd().split("\n");
+  assert.deepEqual(lines.slice(-3), ["| The gate failed.", "| Left the diff.", "stopped: S1 committed nothing"]);
+  assert.equal(lines.filter((line) => line.startsWith("stopped: ")).length, 1);
+  assert.equal(f.calls("claude").length, 1);
+  assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+  assert.equal(git(repo, "status", "--porcelain").stdout, "?? half.txt\n");
+});
+
+test("faber run counts a commit with no Slice trailer as committing nothing", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ ...builds("S1"), commit: { message: "Untagged" } }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: S1 committed nothing\n$/);
+  assert.equal(git(repo, "log", "-1", "--format=%s").stdout, "Untagged\n");
+});
+
+test("faber run counts only the trailer for the slice it started", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S10")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: S1 committed nothing\n$/);
+});
+
+test("faber run starts at the lowest ready slice the branch's trailers leave", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  put(repo, "S1.txt", "S1\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "Build S1\n\nSlice: S1");
+  f.script("claude", [{}]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.match(result.stdout, /\nS2: started\n/);
+  assert.match(result.stdout, /\nstopped: S2 committed nothing\n$/);
+  assert.deepEqual(
+    f.calls("claude").map((call) => call.argv[1]),
+    ["/implement-slice spec/features/demo/slices.json S2"],
+  );
+});
+
+test("faber run stops when a slice session exits non-zero", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ ...builds("S1"), exit: 2, message: "Crashed." }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\n\| Crashed\.\nstopped: S1 exited 2\n$/);
+  assert.equal(f.calls("claude").length, 1);
+});
+
+test("faber run stops at a slice that waits for sign-off", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S1", "Slice-Pending: S1")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: S1 waits for sign-off\n$/);
+  assert.equal(f.calls("claude").length, 1);
+});
+
+test("faber run stops on a slices file it cannot build from, and starts no session", (t) => {
+  for (const [slices, problem] of [
+    ["not json", "is not JSON"],
+    ['{"slices": []}', "lists no slices"],
+    ['{"slices": [{"title": "x"}]}', "has a slice with no id, at index 0"],
+    ['{"slices": [{"id": "S1", "blocked_by": "S0"}]}', "has a blocked_by in S1 that is not a list of ids"],
+    ['{"slices": [{"id": "S1"}, {"id": "S1"}]}', "lists S1 twice"],
+    ['{"slices": [{"id": "../S1"}]}', "has a slice id that is not letters, digits and dashes: \\.\\./S1"],
+  ]) {
+    const f = fakes(t);
+    const { repo } = builtRepo(t, slices);
+    const result = runFaberWithFakes(f, repo, "run", "demo");
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, new RegExp(`\\nstopped: spec/features/demo/slices\\.json ${problem}\\n$`));
+    assert.equal(f.calls("claude").length, 0);
+  }
+});
+
+test("faber run stops when no slice is ready, naming what each waits for", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t, JSON.stringify({ slices: [{ id: "S1", blocked_by: ["S9"] }] }));
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\n\| S1 waits for S9\nstopped: no slice is ready\n$/);
+  assert.equal(f.calls("claude").length, 0);
+});
+
+test("faber run ends listing the slices already waiting for sign-off when nothing else is ready", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  for (const [id, trailer] of [
+    ["S1", "Slice: S1"],
+    ["S2", "Slice-Pending: S2"],
+    ["S10", "Slice-Pending: S10"],
+  ]) {
+    put(repo, `${id}.txt`, `${id}\n`);
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", `Build ${id}\n\n${trailer}`);
+  }
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: S2, S10 wait for sign-off\n$/);
+  assert.equal(f.calls("claude").length, 0);
 });

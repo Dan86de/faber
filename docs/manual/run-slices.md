@@ -14,7 +14,7 @@ Preconditions: for each of the repos `ready`, `stray` and `empty`, run `repo <ru
 - **Cut the slices in a session.** Run `script <run> claude [{"write": {"spec/features/demo/slices.json": "{}"}, "tools": 3, "message": "Cut it."}]`, then `faber <run> ready run demo`.
   It exits 1.
   Its first stdout line is the run folder, `.scratch/faber/demo/<yyyymmdd-hhmmss>/`.
-  Then, one per line: `created slices/demo from main`, `write-slices: started`, `write-slices: ended, exit 0, 3 tool calls`, `committed spec/features/demo/slices.json`, `pushed slices/demo`, and `stopped: implement-slice is not built yet`; nothing on stderr.
+  Then, one per line: `created slices/demo from main`, `write-slices: started`, `write-slices: ended, exit 0, 3 tool calls`, `committed spec/features/demo/slices.json`, `pushed slices/demo`, and `stopped: spec/features/demo/slices.json lists no slices`; nothing on stderr.
 - **Start write-slices headless.** Run `calls <run> claude`.
   It prints `> claude calls: 1`, then `1. claude -p '/write-slices spec/features/demo/spec.md' --output-format stream-json --verbose --permission-mode auto (cwd repos/ready, stdin closed, session 0)`.
 - **Commit only the slices.** Run `log <run> ready`.
@@ -40,4 +40,4 @@ Run `show <run> stray/<run folder>run.log`, with the folder that run printed fir
 - faber commits `slices.json` itself; a write-slices session that exits non-zero, writes any other path, commits on its own, or writes nothing stops the run with `stopped: write-slices exited <code>`, `touched <path>`, `committed on its own` or `wrote nothing`, the same stops write-spec has.
 - `touched` names the first stray path in sorted order, whether the session added, changed or deleted it.
 - A stop leaves what the session wrote for the owner to read, so the next run refuses the dirty tree until the owner cleans it.
-- Until faber can build slices, a run with both planning files committed ends with `stopped: implement-slice is not built yet` and exit 1.
+- The `{}` the fake writes lists no slices, so the run stops right after the push; once a slices file lists slices, the run builds them, as [Build the slices](./run-build.md) describes.

@@ -44,4 +44,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Run](./run.md): `faber run <slug>` refuses a run with no slug, outside git, with a dirty tree, or with no committed decision record, before starting any session.
 - [Write the spec](./run-spec.md): `faber run <slug>` from a committed decision record runs write-spec headless on `slices/<slug>`, commits and pushes only `spec.md`, and keeps a run folder.
 - [Cut the slices](./run-slices.md): `faber run <slug>` with a committed spec runs write-slices headless, commits and pushes only `slices.json`, and stops on a stray path or nothing written.
+- [Build the slices](./run-build.md): `faber run <slug>` with both planning files committed runs one implement-slice session per ready slice while each adds its `Slice:` trailer, and stops on a slice that commits nothing.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

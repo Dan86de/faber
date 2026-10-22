@@ -101,3 +101,27 @@ export function pushBranch(root: string, branch: string): { error: string } | un
   const result = git(root, "push", "--quiet", "--set-upstream", "origin", branch);
   return result.status === 0 ? undefined : { error: `git push failed: ${result.stderr.trim()}` };
 }
+
+// The text of `path` as committed at `ref`, or undefined when it is not committed there.
+export function committedText(root: string, ref: string, path: string): string | undefined {
+  const result = git(root, "show", `${ref}:${path}`);
+  return result.status === 0 ? result.stdout : undefined;
+}
+
+// The slice ids `Slice:` and `Slice-Pending:` trailers name on the commits `HEAD` has and `base` lacks.
+export function sliceTrailers(
+  root: string,
+  base: string,
+): { done: Set<string>; pending: Set<string> } | { error: string } {
+  const fields = ["Slice", "Slice-Pending"].map((key) => `%(trailers:key=${key},valueonly,separator=%x1f)`);
+  const log = git(root, "log", "-z", `--format=${fields.join("%x1e")}`, `${base}..HEAD`);
+  if (log.status !== 0) return { error: `git log failed: ${log.stderr.trim()}` };
+  const done = new Set<string>();
+  const pending = new Set<string>();
+  for (const commit of log.stdout.split("\0")) {
+    const [slices = "", pendings = ""] = commit.split("\x1e");
+    for (const id of slices.split("\x1f")) if (id.trim()) done.add(id.trim());
+    for (const id of pendings.split("\x1f")) if (id.trim()) pending.add(id.trim());
+  }
+  return { done, pending };
+}
