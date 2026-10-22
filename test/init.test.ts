@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { git, runFaber, tempRepo } from "./faber.ts";
@@ -65,4 +65,68 @@ test("faber init writes an AGENTS.md that points at the project files and states
 
 test("faber init writes a CLAUDE.md that imports AGENTS.md", (t) => {
   assert.equal(initFiles(t)("CLAUDE.md"), "@AGENTS.md\n");
+});
+
+test("a second faber init prints only kept lines and leaves every file byte-identical", (t) => {
+  const repo = tempRepo(t);
+  assert.equal(runFaber(repo, "init").status, 0);
+  const before = projectFiles.map((path) => readFileSync(join(repo, path)));
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
+    ...projectFiles.map((path) => `kept ${path}`),
+    "next: fill spec/vision.md and .agents/coding-standards.md, then commit",
+  ]);
+  projectFiles.forEach((path, i) => {
+    assert.ok(readFileSync(join(repo, path)).equals(before[i] ?? Buffer.alloc(0)), `${path} is byte-identical`);
+  });
+});
+
+test("faber init creates .gitignore holding .scratch/ when it is missing", (t) => {
+  const repo = tempRepo(t);
+  assert.equal(runFaber(repo, "init").status, 0);
+  assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), ".scratch/\n");
+});
+
+test("faber init appends .scratch/ to a .gitignore without it and keeps what was there", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\ndist/");
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes("appended .scratch/ to .gitignore\n"), result.stdout);
+  assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), "node_modules/\ndist/\n.scratch/\n");
+});
+
+test("faber init leaves .scratch/ in .gitignore exactly once after repeated runs", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\n");
+  for (let run = 0; run < 3; run++) assert.equal(runFaber(repo, "init").status, 0);
+  const entries = readFileSync(join(repo, ".gitignore"), "utf8")
+    .split("\n")
+    .filter((line) => line === ".scratch/");
+  assert.equal(entries.length, 1);
+});
+
+test("faber init keeps a .gitignore that already ignores .scratch in another spelling", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, ".gitignore"), "/.scratch\n");
+  const result = runFaber(repo, "init");
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes("kept .gitignore\n"), result.stdout);
+  assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), "/.scratch\n");
+});
+
+test("faber init appends .scratch/ to an empty .gitignore with no blank line before it", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, ".gitignore"), "");
+  assert.equal(runFaber(repo, "init").status, 0);
+  assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), ".scratch/\n");
+});
+
+test("faber init keeps a .gitignore with Windows line endings that already ignores .scratch/", (t) => {
+  const repo = tempRepo(t);
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\r\n.scratch/\r\n");
+  const result = runFaber(repo, "init");
+  assert.ok(result.stdout.includes("kept .gitignore\n"), result.stdout);
+  assert.equal(readFileSync(join(repo, ".gitignore"), "utf8"), "node_modules/\r\n.scratch/\r\n");
 });
