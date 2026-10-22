@@ -103,7 +103,7 @@ function option(name: string): string | undefined {
 }
 
 const headless = argv.includes("-p") || argv.includes("--print");
-const call: FakeCall = { argv, cwd: process.cwd(), stdin: await stdinState(), session: null };
+const call: FakeCall = { argv, cwd: process.cwd(), stdin: await stdinState(), session: null, pid: process.pid };
 const script = readScript(dir, "claude");
 const problem = claudeScriptProblem(script);
 const sessions = (problem ? [] : script) as ClaudeSession[];

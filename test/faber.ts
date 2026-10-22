@@ -1,5 +1,5 @@
 // Runs the real faber CLI as a child process in a fresh temp folder or git repo, the way a user would.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -85,6 +85,44 @@ export function runOnPath(f: Fakes, cwd: string, command: string, args: string[]
 // Runs faber with the fakes first on PATH, so any session or PR read it starts reaches a fake.
 export function runFaberWithFakes(f: Fakes, cwd: string, ...args: string[]): RunResult {
   return spawnIsolated(process.execPath, [cli, ...args], cwd, withFakes(f, isolatedEnv(cwd)));
+}
+
+// Runs faber with the fakes first on PATH and sends `signal` once it has started a fake claude session: to faber
+// alone, to its whole process group, session included, the way a terminal sends Ctrl-C, or to the session alone.
+// `signaled` says whether a session started before faber ended.
+export async function interruptFaber(
+  f: Fakes,
+  cwd: string,
+  { signal, to = "faber" }: { signal: NodeJS.Signals; to?: "faber" | "group" | "session" },
+  ...args: string[]
+): Promise<RunResult & { signaled: boolean }> {
+  const before = f.calls("claude").length;
+  const env = withFakes(f, isolatedEnv(cwd));
+  const child = spawn(process.execPath, [cli, ...args], { cwd, env, detached: to === "group" });
+  child.stdin.end();
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  let signaled = false;
+  const poll = setInterval(() => {
+    const session = f.calls("claude")[before];
+    if (session === undefined) return;
+    clearInterval(poll);
+    signaled = true;
+    if (to === "session") process.kill(session.pid, signal);
+    else if (to === "group" && child.pid !== undefined) process.kill(-child.pid, signal);
+    else child.kill(signal);
+  }, 20);
+  const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+  const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  clearInterval(poll);
+  clearTimeout(timer);
+  return { status, stdout, stderr, signaled };
 }
 
 function withFakes(f: Fakes, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

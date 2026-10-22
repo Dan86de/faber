@@ -7,22 +7,30 @@ import { createInterface } from "node:readline";
 // A session's wall-clock limit and the most tool calls it may make; passing either kills it.
 export type Limits = { timeoutMs: number; maxTools: number };
 
-export type Session = { skill: string; args: string; cwd: string; transcript: string; limits: Limits };
+// Aborting `interrupt` kills the session, the way passing a limit does.
+export type Session = {
+  skill: string;
+  args: string;
+  cwd: string;
+  transcript: string;
+  limits: Limits;
+  interrupt: AbortSignal;
+};
 
-// `killed` names the limit the session passed, when faber killed it for one.
+// `killed` names why faber killed the session: a limit it passed, or an interrupt.
 export type SessionResult = {
   exit: number;
   tools: number;
   denials: number;
   lastMessage: string;
-  killed?: "timeout" | "tools";
+  killed?: "timeout" | "tools" | "interrupt";
 };
 
 // How long a killed session gets to exit on SIGTERM before it gets SIGKILL.
 const killGraceMs = 5_000;
 
 // Runs `claude -p "/<skill> <args>"` from PATH with stdin closed, copying its stream-json lines to `transcript`.
-export function runSession({ skill, args, cwd, transcript, limits }: Session): Promise<SessionResult> {
+export function runSession({ skill, args, cwd, transcript, limits, interrupt }: Session): Promise<SessionResult> {
   const prompt = `/${skill} ${args}`;
   const flags = ["--output-format", "stream-json", "--verbose", "--permission-mode", "auto"];
   const child = spawn("claude", ["-p", prompt, ...flags], { cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -30,14 +38,17 @@ export function runSession({ skill, args, cwd, transcript, limits }: Session): P
   const result: SessionResult = { exit: 0, tools: 0, denials: 0, lastMessage: "" };
   let stderr = "";
   let grace: NodeJS.Timeout | undefined;
-  // Kills the session once, for the first limit it passed; what it streams after that is kept but not counted.
-  const kill = (limit: "timeout" | "tools") => {
+  // Kills the session once, for the first reason; what it streams after that is kept but not counted.
+  const kill = (reason: NonNullable<SessionResult["killed"]>) => {
     if (result.killed) return;
-    result.killed = limit;
+    result.killed = reason;
     child.kill("SIGTERM");
     grace = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
   };
   const timer = setTimeout(() => kill("timeout"), limits.timeoutMs);
+  const onInterrupt = () => kill("interrupt");
+  if (interrupt.aborted) onInterrupt();
+  else interrupt.addEventListener("abort", onInterrupt, { once: true });
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     stderr += chunk;
   });
@@ -54,8 +65,11 @@ export function runSession({ skill, args, cwd, transcript, limits }: Session): P
     child.on("close", (code, signal) => {
       clearTimeout(timer);
       clearTimeout(grace);
+      interrupt.removeEventListener("abort", onInterrupt);
       out.end();
       result.exit = code ?? 128 + (signal ? constants.signals[signal] : 0);
+      // faber never sends these, so a session they ended was interrupted with faber, as Ctrl-C to the terminal does.
+      if (signal === "SIGINT" || signal === "SIGHUP") result.killed ??= "interrupt";
       // A session that died before its result still leaves the owner something to read.
       if (!result.lastMessage) result.lastMessage = stderr.trim();
       resolve(result);

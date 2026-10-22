@@ -22,10 +22,12 @@ if (command === undefined || command === "help" || command === "--help" || comma
     for (const line of init(repo.root)) console.log(line);
   }
 } else if (command === "run") {
-  process.exitCode = await run(process.cwd(), args, {
-    refuse: (line) => console.error(line),
-    print: (line) => console.log(line),
-  });
+  // Ctrl-C or a closed terminal stops the run through faber, which kills the session it started first.
+  const interrupt = new AbortController();
+  const onSignal = () => interrupt.abort();
+  process.on("SIGINT", onSignal).on("SIGHUP", onSignal);
+  const output = { refuse: (line: string) => console.error(line), print: (line: string) => console.log(line) };
+  process.exitCode = await run(process.cwd(), args, output, interrupt.signal);
 } else {
   console.error(`faber: unknown command "${command}"\n\n${usage}`);
   process.exitCode = 1;

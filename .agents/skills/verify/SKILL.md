@@ -126,6 +126,16 @@ It runs `faber <args>` with `<run>/repos/<name>[/<folder>]` as the working direc
 It echoes `> cd repos/<name>[/<folder>] && faber <args>`, then faber's stdout lines as they are, then each stderr line prefixed with `[stderr] ` (an empty stderr line is logged as `[stderr]` with no trailing space), then `[faber exit <n>]`, and exits with faber's own exit code.
 When the map says a line goes to stderr, look for it with the `[stderr] ` prefix.
 
+To stop a run the way Ctrl-C or a closed terminal does:
+
+```bash
+.agents/skills/verify/verify.ts interrupt <run> <name>[/<folder>] <INT|HUP> <faber args...>
+```
+
+It runs faber as `faber` does, waits until the fake `claude` records a new start, then sends `SIGINT` or `SIGHUP` to the faber process alone, never to the session it started.
+It echoes the `> cd` line, faber's stdout and `[stderr] ` lines, then `> sent SIG<signal> once claude call <n> started`, or `> sent nothing: faber started no claude session` when faber ended first, then `[faber exit <n>]`, and exits with faber's own exit code.
+A faber that never ends is killed after 10 seconds, as with `faber`.
+
 Commit the files a step expects to be committed, and give a repo a remote to push to:
 
 ```bash
@@ -160,7 +170,7 @@ To read which commits a step made:
 It prints `> git log in repos/<name>, on <branch>`, then every commit `HEAD` reaches, newest first, as `<short sha> <subject>`, each followed by one `  <status> <path>` line per path it changed (`A` added, `M` modified, `D` deleted), or `(no commits)`.
 `log` only reads, so it also works on a stopped run.
 
-In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...`, `show ...` and `log ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
+In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...`, `interrupt ...`, `show ...` and `log ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
 Follow the feature file's `Preconditions` and `Steps` in order, one helper call per command, then its `Behind it`.
 Each feature file assumes a fresh run.
 

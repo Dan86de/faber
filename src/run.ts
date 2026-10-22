@@ -35,7 +35,8 @@ const slugPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 // Carries the feature `args` names from its committed decision record as far as faber can take it, and returns
 // the exit code. Every refusal reads git alone and changes nothing; only a run that passes them switches branch.
-export async function run(cwd: string, args: string[], output: RunOutput): Promise<number> {
+// Aborting `interrupt` kills the running session and stops the run once it has ended.
+export async function run(cwd: string, args: string[], output: RunOutput, interrupt: AbortSignal): Promise<number> {
   const refuse = (...lines: string[]) => {
     for (const line of lines) output.refuse(line);
     return 1;
@@ -89,7 +90,11 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
   };
 
   // Runs one headless session named `name`, printing its start and end lines and keeping its stream as `<name>.jsonl`.
+  // An interrupt that came while faber ran git reaches its handler only once the event loop turns, so the loop turns
+  // first and an interrupted run starts no session.
   const start = async (name: string, skill: string, input: string): Promise<SessionResult> => {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (interrupt.aborted) return { exit: 0, tools: 0, denials: 0, lastMessage: "", killed: "interrupt" };
     say(`${name}: started`);
     const session = await runSession({
       skill,
@@ -97,13 +102,16 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
       cwd: root,
       transcript: join(root, folder, `${name}.jsonl`),
       limits,
+      interrupt,
     });
     say(`${name}: ended, exit ${session.exit}, ${session.tools} tool call${session.tools === 1 ? "" : "s"}`);
     return session;
   };
-  // Why a session that ended stops the run whatever it left in git, or undefined; a limit it passed comes first,
-  // since faber killed it for that, then a denial, which a non-zero exit may only follow from.
+  // Why a session that ended stops the run whatever it left in git, or undefined; an interrupt comes first, since
+  // the owner asked for the stop, then a limit faber killed it for, then a denial, which a non-zero exit may only
+  // follow from.
   const failed = (name: string, session: SessionResult) => {
+    if (interrupt.aborted || session.killed === "interrupt") return "interrupted";
     if (session.killed === "timeout") return `${name} ran past ${timeout} minutes`;
     if (session.killed === "tools") return `${name} passed ${maxTools} tool calls`;
     if (session.denials > 0) return `${name} hit a permission denial`;

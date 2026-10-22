@@ -22,8 +22,14 @@ export type ClaudeSession = {
 // The pull request `gh pr view` reports for the current branch; with none, gh finds no PR.
 export type GhScript = { pr?: { url: string; isDraft: boolean } };
 
-// One recorded start of a fake: its arguments, working folder, how stdin looked, and which session it ran.
-export type FakeCall = { argv: string[]; cwd: string; stdin: "closed" | "open" | "tty"; session: number | null };
+// One recorded start of a fake: its arguments, working folder, how stdin looked, which session it ran, and its pid.
+export type FakeCall = {
+  argv: string[];
+  cwd: string;
+  stdin: "closed" | "open" | "tty";
+  session: number | null;
+  pid: number;
+};
 
 const sessionKeys: string[] = [
   "write",

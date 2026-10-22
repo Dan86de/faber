@@ -8,7 +8,7 @@ if (!dir) {
   process.exit(2);
 }
 const argv = process.argv.slice(2);
-const call: FakeCall = { argv, cwd: process.cwd(), stdin: await stdinState(), session: null };
+const call: FakeCall = { argv, cwd: process.cwd(), stdin: await stdinState(), session: null, pid: process.pid };
 appendFileSync(fakeFiles(dir, "gh").calls, `${JSON.stringify(call)}\n`);
 
 const script = readScript(dir, "gh");

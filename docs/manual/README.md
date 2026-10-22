@@ -14,7 +14,7 @@ In this checkout it runs as `node src/cli.ts`.
 
 ## Driving conventions
 
-- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir`, `show` and `log` are helper commands too.
+- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir`, `show`, `log` and `interrupt` are helper commands too.
 - Make the files a step expects to exist with `write`, and the folders with `mkdir`, before running faber.
 - Commit the files a step expects to be committed with `commit`, and give a repo a bare `origin` with `remote`; both are helper commands.
 - faber reaches Claude Code and GitHub only through the run's fake `claude` and `gh`: pick what each does with `script` before the step, and read what faber started with `calls`.
@@ -47,4 +47,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Build the slices](./run-build.md): `faber run <slug>` with both planning files committed runs one implement-slice session per ready slice while each adds its `Slice:` trailer, and stops on a slice that commits nothing.
 - [Go on past a sign-off](./run-signoff.md): `faber run <slug>` goes on past a slice that adds `Slice-Pending:` with every slice that does not depend on it, and ends listing every slice that waits for sign-off.
 - [Stop on a failed session](./run-limits.md): `faber run <slug>` stops when a session exits non-zero, hits a permission denial, or passes `--timeout` or `--max-tools`, killing it if it still runs.
+- [Stop on an interrupt](./run-interrupt.md): Ctrl-C or a closed terminal during `faber run <slug>` kills the running session, leaves the tree, and ends with `stopped: interrupted`.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

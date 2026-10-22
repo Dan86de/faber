@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { bareRemote, commitAll, fakes, git, runFaberWithFakes, tempDir, tempRepo } from "./faber.ts";
+import { bareRemote, commitAll, fakes, git, interruptFaber, runFaberWithFakes, tempDir, tempRepo } from "./faber.ts";
 
 // Writes `text` at `path` in `repo`, making its folders.
 function put(repo: string, path: string, text: string): void {
@@ -654,3 +654,47 @@ test("faber run lets a session make exactly --max-tools tool calls", (t) => {
   assert.match(result.stdout, /\nS1: ended, exit 0, 3 tool calls\nS2: started\n/);
   assert.match(result.stdout, /\nstopped: S2 committed nothing\n$/);
 });
+
+for (const signal of ["SIGINT", "SIGHUP"] as const) {
+  test(`faber run on ${signal} kills the running session, leaves the tree, and stops`, async (t) => {
+    const f = fakes(t);
+    const { repo } = builtRepo(t);
+    f.script("claude", [{ write: { "half.txt": "half\n" }, tools: 1, hang: true }, builds("S10")]);
+    const before = git(repo, "rev-parse", "HEAD").stdout;
+    const result = await interruptFaber(f, repo, { signal }, "run", "demo");
+    assert.ok(result.signaled, "faber started a session to interrupt");
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, "");
+    assert.match(result.stdout, /\nS1: started\nS1: ended, exit 143, \d tool calls?\nstopped: interrupted\n$/);
+    assert.equal(f.calls("claude").length, 1);
+    assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+    assert.equal(git(repo, "status", "--porcelain").stdout, "?? half.txt\n");
+    const folder = result.stdout.split("\n")[0] as string;
+    assert.equal(readFileSync(join(repo, folder, "run.log"), "utf8"), result.stdout);
+  });
+}
+
+test("faber run stops as interrupted on Ctrl-C to its whole process group", async (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ tools: 1, hang: true }, builds("S10")]);
+  const result = await interruptFaber(f, repo, { signal: "SIGINT", to: "group" }, "run", "demo");
+  assert.ok(result.signaled, "faber started a session to interrupt");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nS1: ended, exit 130, \d tool calls?\nstopped: interrupted\n$/);
+  assert.equal(f.calls("claude").length, 1);
+});
+
+for (const signal of ["SIGINT", "SIGHUP"] as const) {
+  test(`faber run stops as interrupted when ${signal} ends the session but not faber`, async (t) => {
+    const f = fakes(t);
+    const { repo } = builtRepo(t);
+    f.script("claude", [{ tools: 1, hang: true }, builds("S10")]);
+    const result = await interruptFaber(f, repo, { signal, to: "session" }, "run", "demo");
+    assert.ok(result.signaled, "faber started a session to interrupt");
+    assert.equal(result.status, 1);
+    const code = signal === "SIGINT" ? 130 : 129;
+    assert.match(result.stdout, new RegExp(`\\nS1: ended, exit ${code}, \\d tool calls?\\nstopped: interrupted\\n$`));
+    assert.equal(f.calls("claude").length, 1);
+  });
+}

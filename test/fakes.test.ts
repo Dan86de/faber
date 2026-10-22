@@ -74,7 +74,11 @@ test("fake claude writes, commits with trailers and pushes, then ends with a str
   assert.equal(git(repo, "log", "-1", "--format=%(trailers:key=Slice,valueonly)").stdout.trim(), "S1");
   assert.equal(git(repo, "status", "--porcelain").stdout, "");
   assert.equal(git(repo, "rev-parse", "HEAD").stdout, git(bare, "rev-parse", "main").stdout);
-  assert.deepEqual(f.calls("claude"), [{ argv: headless, cwd: repo, stdin: "closed", session: 0 }]);
+  const [call, ...more] = f.calls("claude");
+  assert.deepEqual(more, []);
+  const { pid, ...rest } = call ?? { pid: 0 };
+  assert.deepEqual(rest, { argv: headless, cwd: repo, stdin: "closed", session: 0 });
+  assert.ok(Number.isInteger(pid) && pid > 0, "the call records the fake's pid");
 });
 
 test("fake claude runs its sessions in order and fails once they run out", (t) => {

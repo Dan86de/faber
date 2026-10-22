@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Verify helper: runs the faber CLI inside throwaway repos in one run folder,
 // with its own home and git config, and logs every call to the run's transcript.log.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
@@ -22,6 +22,7 @@ const usage = `usage:
   verify.ts mkdir <run> <name>/<folder>
   verify.ts write <run> <name>/<file> <text>
   verify.ts faber <run> <name>[/<folder>] [faber args...]
+  verify.ts interrupt <run> <name>[/<folder>] <INT|HUP> [faber args...]
   verify.ts show <run> <name>[/<file>]
   verify.ts log <run> <name>
   verify.ts commit <run> <name> <message>
@@ -299,13 +300,19 @@ function writeFile(p: Paths, arg: string | undefined, text: string | undefined):
   done(0);
 }
 
-function faber(p: Paths, arg: string | undefined, args: string[]): never {
+// The folder `arg` names for faber to run in, refusing a stopped run or a target that is not a folder.
+function faberFolder(p: Paths, arg: string | undefined): string {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
   const t = target(p, arg);
   if (!existsSync(t.path) || !statSync(t.path).isDirectory())
     fail(`refused: ${t.path} is not a folder; make it with \`mkdir\``);
+  return t.path;
+}
+
+function faber(p: Paths, arg: string | undefined, args: string[]): never {
+  const cwd = faberFolder(p, arg);
   const child = spawnSync(process.execPath, [cli, ...args], {
-    cwd: t.path,
+    cwd,
     env: runEnv(p),
     encoding: "utf8",
     timeout: timeoutMs,
@@ -315,10 +322,55 @@ function faber(p: Paths, arg: string | undefined, args: string[]): never {
   const state = readState(p);
   state.pids.push(child.pid ?? 0);
   writeState(p, state);
-  out(`> cd ${relative(p.run, t.path)} && faber ${args.map(quote).join(" ")}`.trimEnd());
+  out(`> cd ${relative(p.run, cwd)} && faber ${args.map(quote).join(" ")}`.trimEnd());
   echoOutput(child);
   out(`[faber exit ${child.status ?? child.signal}]`);
   done(child.status ?? 1);
+}
+
+// Runs faber like `faber`, and once it has started a fake claude session sends faber alone `SIG<signal>`, as
+// Ctrl-C (INT) or a closed terminal (HUP) would; a faber that starts no session runs until it ends or times out.
+async function interrupt(p: Paths, arg: string | undefined, signalArg: string | undefined, args: string[]) {
+  const cwd = faberFolder(p, arg);
+  if (signalArg !== "INT" && signalArg !== "HUP") fail("refused: name the signal to send: INT or HUP");
+  const signal = `SIG${signalArg}` as const;
+  const before = readCalls(p.fakes, "claude").length;
+  const child = spawn(process.execPath, [cli, ...args], { cwd, env: runEnv(p) });
+  child.stdin.end();
+  const state = readState(p);
+  state.pids.push(child.pid ?? 0);
+  writeState(p, state);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  let sent: number | undefined;
+  const poll = setInterval(() => {
+    const started = readCalls(p.fakes, "claude").length;
+    if (started === before) return;
+    clearInterval(poll);
+    sent = started;
+    child.kill(signal);
+  }, 20);
+  const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+  const [status, killedBy] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
+    child.on("close", (code, by) => resolve([code, by])),
+  );
+  clearInterval(poll);
+  clearTimeout(timer);
+  out(`> cd ${relative(p.run, cwd)} && faber ${args.map(quote).join(" ")}`.trimEnd());
+  echoOutput({ stdout, stderr });
+  out(
+    sent === undefined
+      ? "> sent nothing: faber started no claude session"
+      : `> sent ${signal} once claude call ${sent} started`,
+  );
+  out(`[faber exit ${status ?? killedBy}]`);
+  done(status ?? 1);
 }
 
 // A child's stdout lines as they are, its stderr lines marked `[stderr] `, and any spawn error.
@@ -532,6 +584,9 @@ switch (command) {
     break;
   case "faber":
     faber(openRun(runArg), rest[0], rest.slice(1));
+    break;
+  case "interrupt":
+    await interrupt(openRun(runArg), rest[0], rest[1], rest.slice(2));
     break;
   case "show":
     show(openRun(runArg), rest[0]);
