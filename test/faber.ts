@@ -82,6 +82,11 @@ export function runOnPath(f: Fakes, cwd: string, command: string, args: string[]
   return { status: child.status, stdout: child.stdout, stderr: child.stderr };
 }
 
+// Runs faber with the fakes first on PATH, so any session or PR read it starts reaches a fake.
+export function runFaberWithFakes(f: Fakes, cwd: string, ...args: string[]): RunResult {
+  return spawnIsolated(process.execPath, [cli, ...args], cwd, withFakes(f, isolatedEnv(cwd)));
+}
+
 function withFakes(f: Fakes, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, PATH: `${f.bin}:${env.PATH}` };
 }

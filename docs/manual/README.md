@@ -41,4 +41,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Run init again](./rerun.md): a second run keeps every file byte for byte, and `.gitignore` gets `.scratch/` once.
 - [Respect existing files](./existing-files.md): older standards and glossary files are kept as fallbacks, and a `CLAUDE.md` without `@AGENTS.md` gets a warning.
 - [Git root](./git-root.md): init writes at the repo's top from any subfolder, and refuses outside a repo.
+- [Run](./run.md): `faber run <slug>` refuses a run with no slug, outside git, with a dirty tree, or with no committed decision record, before starting any session.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

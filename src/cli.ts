@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { gitRoot } from "./git.ts";
 import { init } from "./init.ts";
+import { run } from "./run.ts";
 
 const usage = `usage: faber <command>
 
 commands:
-  init  create the project files the skills read, keeping any that exist`;
+  init         create the project files the skills read, keeping any that exist
+  run <slug>   carry a feature from its committed decision record to a ready PR`;
 
-const [command] = process.argv.slice(2);
+const [command, ...args] = process.argv.slice(2);
 
 if (command === undefined || command === "help" || command === "--help" || command === "-h") {
   console.log(usage);
@@ -19,6 +21,10 @@ if (command === undefined || command === "help" || command === "--help" || comma
   } else {
     for (const line of init(repo.root)) console.log(line);
   }
+} else if (command === "run") {
+  const outcome = run(process.cwd(), args);
+  for (const line of outcome.lines) console.error(line);
+  process.exitCode = outcome.code;
 } else {
   console.error(`faber: unknown command "${command}"\n\n${usage}`);
   process.exitCode = 1;
