@@ -29,4 +29,6 @@ Write one sentence per line in Markdown files.
 
 ## Stack
 
-Not decided yet.
+TypeScript on Node 24 with pnpm and no runtime dependencies; development runs `src/` through Node's type stripping.
+`pnpm check` runs biome, `tsc --noEmit` and `node --test`, locally and in CI on every PR.
+`pnpm build` emits `dist/`, which the `faber` bin runs.

@@ -11,6 +11,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const runsRoot = join(repo, ".scratch", "verify");
 const cli = join(repo, "src", "cli.ts");
 const timeoutMs = 10_000;
+const repoName = /^[a-z0-9][a-z0-9-]*$/;
 
 const [command, runArg, ...rest] = process.argv.slice(2);
 const usage = `usage:
@@ -52,7 +53,10 @@ function codeState(): CodeState {
   const status = git("status", "--porcelain", "--untracked-files=all");
   const diff = spawnSync(
     "sh",
-    ["-c", "git diff HEAD -- src templates package.json; git ls-files -o --exclude-standard -z -- src templates | xargs -0 cat 2>/dev/null"],
+    [
+      "-c",
+      "git diff HEAD -- src templates package.json; git ls-files -o --exclude-standard -z -- src templates | xargs -0 cat 2>/dev/null",
+    ],
     { cwd: repo, encoding: "utf8" },
   ).stdout;
   const hash = createHash("sha256").update(diff).digest("hex");
@@ -99,6 +103,7 @@ function target(p: Paths, arg: string | undefined): { name: string; root: string
   const rel = normalize(arg);
   if (rel.startsWith("..")) fail(`refused: ${arg} leaves this run's repos`);
   const [name, ...parts] = rel.split(sep);
+  if (name === undefined || !repoName.test(name)) fail(`refused: ${arg} does not start with a repo name`);
   const root = join(p.repos, name);
   if (!existsSync(root)) fail(`refused: no repo named ${name} in this run; make it with \`repo\``);
   return { name, root, path: join(root, ...parts), rel: parts.join("/") };
@@ -154,7 +159,10 @@ function start(): never {
   const p = paths(run);
   mkdirSync(p.home, { recursive: true });
   mkdirSync(p.repos, { recursive: true });
-  writeFileSync(join(p.home, ".gitconfig"), "[user]\n\tname = Verify Run\n\temail = verify@example.invalid\n[init]\n\tdefaultBranch = main\n");
+  writeFileSync(
+    join(p.home, ".gitconfig"),
+    "[user]\n\tname = Verify Run\n\temail = verify@example.invalid\n[init]\n\tdefaultBranch = main\n",
+  );
   const code = codeState();
   writeState(p, { started: new Date().toISOString(), node: process.version, pids: [], ...code });
   writeFileSync(
@@ -196,7 +204,9 @@ function doctor(p: Paths): never {
       `code changed since start (started at ${state.head.slice(0, 7)}, now ${now.head.slice(0, 7)}${now.dirty ? " with uncommitted changes" : ""}); start a new run`,
     );
   } else if (now.status !== state.status) {
-    problems.push("faber's own checkout changed since start; if no one edited it, a faber run wrote outside its repo, which is a fail");
+    problems.push(
+      "faber's own checkout changed since start; if no one edited it, a faber run wrote outside its repo, which is a fail",
+    );
   }
   if (process.version !== state.node) problems.push(`node changed since start (${state.node} -> ${process.version})`);
   const alive = state.pids.filter(isAlive);
@@ -232,7 +242,7 @@ function doctor(p: Paths): never {
 
 function makeRepo(p: Paths, name: string | undefined, flags: string[]): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
-  if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) fail("refused: a repo name is lowercase letters, digits and dashes");
+  if (!name || !repoName.test(name)) fail("refused: a repo name is lowercase letters, digits and dashes");
   const root = join(p.repos, name);
   if (existsSync(root)) fail(`refused: repo ${name} already exists in this run`);
   mkdirSync(root);
@@ -270,7 +280,8 @@ function writeFile(p: Paths, arg: string | undefined, text: string | undefined):
 function faber(p: Paths, arg: string | undefined, args: string[]): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
   const t = target(p, arg);
-  if (!existsSync(t.path) || !statSync(t.path).isDirectory()) fail(`refused: ${t.path} is not a folder; make it with \`mkdir\``);
+  if (!existsSync(t.path) || !statSync(t.path).isDirectory())
+    fail(`refused: ${t.path} is not a folder; make it with \`mkdir\``);
   const child = spawnSync(process.execPath, [cli, ...args], {
     cwd: t.path,
     env: runEnv(p),

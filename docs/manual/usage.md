@@ -12,9 +12,12 @@ A user who runs faber without a command, asks it for help, or types a command it
 
 Preconditions: run `repo <run> plain`.
 
-- **No command.** Run `faber <run> plain`. It exits 0 and prints `usage: faber <command>`, then a blank line, then `commands:`.
-- **Ask for help.** Run `faber <run> plain --help`, then `faber <run> plain -h`, then `faber <run> plain help`. Each exits 0 and prints the same lines as with no command.
-- **An unknown command.** Run `faber <run> plain nope`. It exits 1 and prints `[stderr] faber: unknown command "nope"`, then `[stderr]` alone, then the same usage lines, each prefixed with `[stderr]`.
+- **No command.** Run `faber <run> plain`.
+  It exits 0 and prints `usage: faber <command>`, then a blank line, then `commands:`.
+- **Ask for help.** Run `faber <run> plain --help`, then `faber <run> plain -h`, then `faber <run> plain help`.
+  Each exits 0 and prints the same lines as with no command.
+- **An unknown command.** Run `faber <run> plain nope`.
+  It exits 1 and prints `[stderr] faber: unknown command "nope"`, then `[stderr]` alone, then the same usage lines, each prefixed with `[stderr]`.
 
 ## Behind it
 

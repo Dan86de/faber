@@ -5,8 +5,18 @@ The harness that runs [Dan86de/skills](https://github.com/Dan86de/skills) unatte
 *Faber* is Latin for a maker, a craftsman or smith.
 Faber is the tool that runs the makers.
 
-Status: concept.
-Nothing runs yet.
+Status: early.
+`faber init` works; the rest below is planned.
+
+## Install
+
+Faber needs Node 24 or later and git.
+
+```bash
+npm install --global faber
+```
+
+Then run `faber init` anywhere inside a git repo to create the project files the skills read.
 
 ## Shape
 
@@ -38,7 +48,7 @@ That includes the coordinator's prose: it drives faber's own commands, cannot wo
 
 ## What it will do, in order
 
-1. `init`: create the project files the skills read but never write (`spec/vision.md`, `spec/glossary.md`, `.agents/coding-standards.md`, `AGENTS.md`), from templates, never overwriting.
+1. `init`: create the project files the skills read but never write (`spec/vision.md`, `spec/glossary.md`, `.agents/coding-standards.md`, `AGENTS.md`, `CLAUDE.md`, and `.scratch/` in `.gitignore`), from templates, never overwriting.
 2. Coordinator: one command starts a coordinator session for a feature with a decision record; it runs each ready `afk` slice in a fresh headless session, one at a time, and stops on `hitl` or a failed gate.
 3. Ping: tell the owner when a slice waits for sign-off, a run stops, or a PR is ready.
 4. Context: put the vision and standards into every session.
