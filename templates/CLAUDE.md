@@ -1,1 +1,1 @@
-# Claude Code
+@AGENTS.md
