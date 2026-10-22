@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Dan86de/faber"
+    "url": "git+https://github.com/Dan86de/faber.git"
   },
   "type": "module",
   "bin": {
-    "faber": "./dist/cli.js"
+    "faber": "dist/cli.js"
   },
   "files": [
     "dist",

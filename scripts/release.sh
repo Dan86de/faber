@@ -8,6 +8,8 @@ if npm view "$spec" version >/dev/null 2>&1; then
   echo "$spec is already on npm"
   exit 0
 fi
+# Build first: npm reads the bin path from package.json before its prepack script runs.
+pnpm run build
 npm publish
 git tag "v$version"
 git push origin "v$version"
