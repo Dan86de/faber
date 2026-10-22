@@ -13,7 +13,7 @@ Status: early.
 Faber needs Node 24 or later and git.
 
 ```bash
-npm install --global faber
+npm install --global @dan86de/faber
 ```
 
 Then run `faber init` anywhere inside a git repo to create the project files the skills read.
