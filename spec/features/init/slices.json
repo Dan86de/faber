@@ -1,0 +1,150 @@
+{
+  "spec": "spec/features/init/spec.md",
+  "commit": "1df165239ffdd9feeeff2cd89dd9340e2e250d68",
+  "branch": "main",
+  "slices": [
+    {
+      "id": "S1",
+      "kind": "prefactor",
+      "title": "Add AGENTS.md, CLAUDE.md and the .scratch/ gitignore entry to the skills contract",
+      "behaviours": [],
+      "seam": "../skills/.agents/conventions.md:149-157",
+      "blocked_by": [],
+      "autonomy": "hitl",
+      "scope": "Adds rows for AGENTS.md, CLAUDE.md and the .gitignore .scratch/ entry to the project file contract table in the skills repo, via a PR there. Touches no faber code and no other contract rows.",
+      "done": {
+        "automated": [
+          "The contract table in ../skills/.agents/conventions.md lists AGENTS.md, CLAUDE.md and the .gitignore .scratch/ entry"
+        ],
+        "manual": [
+          "The owner merges the contract PR in the skills repo"
+        ]
+      }
+    },
+    {
+      "id": "S2",
+      "kind": "prefactor",
+      "title": "Scaffold the TypeScript package with pnpm check in CI",
+      "behaviours": [],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": [],
+      "autonomy": "afk",
+      "scope": "Adds package.json (name faber, version 0.1.0, engines >=24, bin faber pointing at dist/), tsconfig with rewriteRelativeImportExtensions, biome config, @types/node, a pnpm check script running biome, tsc --noEmit and node --test, a GitHub Actions workflow running pnpm check on every PR, and a faber bin stub with a node --test harness that spawns it in a fresh temp git repo. Implements no init behaviour and leaves the existing prose files alone.",
+      "done": {
+        "automated": [
+          "pnpm check passes locally",
+          "pnpm check passes in CI on a PR",
+          "A node --test case spawns the faber bin in a fresh temp git repo and reads its stdout and exit code"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S3",
+      "kind": "feature",
+      "title": "Create every project file in an empty repo",
+      "behaviours": [1, 12, 13],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S1", "S2"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "In a temp git repo, the first faber init prints created for spec/vision.md, spec/glossary.md, .agents/coding-standards.md, AGENTS.md, CLAUDE.md and .gitignore, in that fixed order, and each file exists",
+          "The run ends with next: fill spec/vision.md and .agents/coding-standards.md, then commit",
+          "git status after a run shows no staged changes and no new commit"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S4",
+      "kind": "feature",
+      "title": "Fill the templates with the headings the skills read",
+      "behaviours": [2, 3, 4, 5],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S3"],
+      "autonomy": "hitl",
+      "done": {
+        "automated": [
+          "The created spec/vision.md holds ## Product principles and ## Current direction, each followed by a <!-- hint --> line",
+          "The created .agents/coding-standards.md holds ## Rules and ## One-way doors",
+          "The created AGENTS.md points at spec/vision.md, spec/glossary.md and .agents/coding-standards.md, states the spec/features/<slug>/ planning rule and that the vision is the owner's, and has an empty ## Rules",
+          "The created CLAUDE.md holds @AGENTS.md"
+        ],
+        "manual": [
+          "The owner runs faber init on a real repo of his and judges whether the templates read well before filling"
+        ]
+      }
+    },
+    {
+      "id": "S5",
+      "kind": "feature",
+      "title": "Keep existing files on a second run",
+      "behaviours": [6, 9],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S3"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "A second run prints only kept lines and leaves every file byte-identical",
+          ".gitignore is created when missing and holds .scratch/",
+          "An existing .gitignore without .scratch/ gets it appended and keeps its prior content",
+          ".gitignore holds .scratch/ exactly once after repeated runs"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S6",
+      "kind": "feature",
+      "title": "Respect contract fallbacks and an existing CLAUDE.md",
+      "behaviours": [7, 8],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S3"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "With CODING_STANDARDS.md present, the run prints kept CODING_STANDARDS.md (fallback) and creates no .agents/coding-standards.md",
+          "With GLOSSARY.md present, the run prints kept GLOSSARY.md (fallback) and creates no spec/glossary.md; the same with CONTEXT.md",
+          "With a CLAUDE.md lacking @AGENTS.md, the run prints kept CLAUDE.md and warn CLAUDE.md does not import @AGENTS.md, and the file stays byte-identical"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S7",
+      "kind": "feature",
+      "title": "Write at the git root or refuse outside git",
+      "behaviours": [10, 11],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S3"],
+      "autonomy": "afk",
+      "done": {
+        "automated": [
+          "A run from a subfolder writes every file at the git root and none in the subfolder",
+          "A run outside a git repo exits non-zero, prints a message saying it is not in a git repo, and writes nothing"
+        ],
+        "manual": []
+      }
+    },
+    {
+      "id": "S8",
+      "kind": "feature",
+      "title": "Install faber from a packed tarball and publish it",
+      "behaviours": [14],
+      "seam": "CLI in a temp git repo",
+      "blocked_by": ["S3"],
+      "autonomy": "hitl",
+      "done": {
+        "automated": [
+          "A tarball from npm pack, installed into a scratch folder, runs faber init from node_modules/.bin/faber against a temp git repo and creates the files",
+          "The tarball holds dist/ and templates/ and no .ts sources",
+          "A changesets release workflow runs changesets/action with npm trusted publishing and no stored npm token"
+        ],
+        "manual": [
+          "The owner does the first npm publish of 0.1.0"
+        ]
+      }
+    }
+  ]
+}
