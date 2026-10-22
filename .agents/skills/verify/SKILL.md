@@ -43,12 +43,14 @@ The run folder holds everything the run touches:
 
 - `repos/`: one folder per repo you make with `repo`; faber only ever runs inside one of them.
 - `home/`: the `HOME` faber and git see, with a `.gitconfig` naming a throwaway user and `main` as the default branch.
+- `fakes/`: the fake `claude` and `gh` in `fakes/bin/`, first on the `PATH` faber sees, with each fake's script and call log (see Fakes).
+- `remotes/`: a bare repo per repo given a remote with `remote`, made only when a step asks for one.
 - `run.json`: commit, branch, a hash of the uncommitted changes to `src/`, `templates/` and `package.json` (the sha256 of empty input when there are none, and a missing folder counts as unchanged), the checkout's `git status`, node version, and the pid of every faber process the run started, the doctor's probe included.
 - `transcript.log`: every helper call, quoted so it can be pasted again from the repository root, with its full output and exit code, refusals included. Each entry starts with a `$ ` line and ends with an `[exit <n>]` line; faber's output can hold blank lines, so split entries on those two lines only, never on blank lines.
 - `evidence.md`: started for you with the commit, branch, whether there were uncommitted changes, and the run folder relative to the repository root; you write the rest.
 
 Isolation is complete: two runs side by side never share a file.
-faber and git run with an environment of only `PATH`, `HOME`, `TZ=UTC`, `LANG=C`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` pointing at the run's `.gitconfig`, `GIT_TERMINAL_PROMPT=0`, and `GIT_CEILING_DIRECTORIES=<run>/repos`.
+faber and git run with an environment of only `PATH` (with `fakes/bin` first), `HOME`, `TZ=UTC`, `LANG=C`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` pointing at the run's `.gitconfig`, `GIT_TERMINAL_PROMPT=0`, and `GIT_CEILING_DIRECTORIES=<run>/repos`.
 The ceiling stops git from looking above `repos/`, so a folder made with `--no-git` is outside any repo even though the run folder sits inside faber's own checkout.
 
 What a run cannot reach, and therefore refuses:
@@ -84,6 +86,7 @@ The problems, each line as printed (`<...>` filled in), and what to do:
 - `unfit: code changed since start (started at <sha>, now <sha>[ with uncommitted changes]); start a new run`: `src/`, `templates/` or `package.json` differs from when the run started, so the run would prove an older build. Start a new run after every code edit.
 - `unfit: faber's own checkout changed since start; if no one edited it, a faber run wrote outside its repo, which is a fail`: run `git status` in the checkout. A file you or the user edited means start a new run; a file faber wrote, such as a new `spec/` or `AGENTS.md` change, is a `fail` for the check that ran it.
 - `unfit: node changed since start (<old> -> <new>)`: start a new run.
+- `unfit: fake <claude|gh> is not first on PATH (found <path>)`: something put a real `claude` or `gh` ahead of the run's fakes, so a faber run could start a real session. Start a new run.
 - `unfit: faber processes from this run still running: <pids>`: run `stop`, then start a new run.
 - `unfit: CLI did not answer: exit <n>, "<output>"`: `faber` with no arguments did not print `usage: faber`. The product does not start; that is a `fail` for every check.
 
@@ -123,6 +126,29 @@ It runs `faber <args>` with `<run>/repos/<name>[/<folder>]` as the working direc
 It echoes `> cd repos/<name>[/<folder>] && faber <args>`, then faber's stdout lines as they are, then each stderr line prefixed with `[stderr] ` (an empty stderr line is logged as `[stderr]` with no trailing space), then `[faber exit <n>]`, and exits with faber's own exit code.
 When the map says a line goes to stderr, look for it with the `[stderr] ` prefix.
 
+To stop a run the way Ctrl-C or a closed terminal does:
+
+```bash
+.agents/skills/verify/verify.ts interrupt <run> <name>[/<folder>] <INT|HUP> <faber args...>
+```
+
+It runs faber as `faber` does, waits until the fake `claude` records a new start, then sends `SIGINT` or `SIGHUP` to the faber process alone, never to the session it started.
+It echoes the `> cd` line, faber's stdout and `[stderr] ` lines, then `> sent SIG<signal> once claude call <n> started`, or `> sent nothing: faber started no claude session` when faber ended first, then `[faber exit <n>]`, and exits with faber's own exit code.
+A faber that never ends is killed after 10 seconds, as with `faber`.
+
+Commit the files a step expects to be committed, and give a repo a remote to push to:
+
+```bash
+.agents/skills/verify/verify.ts commit <run> <name> <message> [--empty]
+.agents/skills/verify/verify.ts remote <run> <name>
+```
+
+`commit` stages every file in the repo, commits it with the message, and prints `commit: <short sha> <subject> (<branch>, <n> file[s])`; it refuses a repo with nothing to commit.
+With `--empty` it stages nothing and makes a commit with no files, the way a sign-off by hand does, and prints `0 files`; it refuses a repo with uncommitted changes.
+A message can hold line breaks, so trailers such as `Slice: S1` go after a blank line in the one argument.
+`remote` makes the bare repo `<run>/remotes/<name>.git`, adds it as `origin`, pushes every branch the repo has with upstreams set, and prints `remote: origin -> <path>, pushed <branches | nothing yet>`.
+Make the setup commits first, then the remote, the way a user's repo already has its default branch on GitHub.
+
 To read what a step left behind:
 
 ```bash
@@ -132,11 +158,21 @@ To read what a step left behind:
 
 With a repo name it prints `> files in repos/<name>, with sha256 (first 12) and bytes`, then one line per file outside `.git` as `<hash> <bytes> <path>` sorted by path, or `(no files)`.
 For a git repo it then prints `> git commits: <n>` and `> git staged:` followed by the staged paths or `(nothing staged)`; for a `--no-git` folder it prints `> git: not a repo`.
+For a repo with a remote it ends with `> git remote origin:` and one `<short sha> <branch>` line per branch the bare repo holds, or `(no branches)`, so a push is evidence too.
 Two `show` listings with the same lines prove the files are byte-identical.
 With a file it prints `> cat repos/<name>/<file>`, then the file, or `(no such file)`, and `(no newline at end of file)` when the file does not end in one.
 `show` only reads, so it also works on a stopped run, and it is logged like every other call, so the stored state becomes evidence rather than a claim.
 
-In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...` and `show ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
+To read which commits a step made:
+
+```bash
+.agents/skills/verify/verify.ts log <run> <name>
+```
+
+It prints `> git log in repos/<name>, on <branch>`, then every commit `HEAD` reaches, newest first, as `<short sha> <subject>`, each followed by one `  <status> <path>` line per path it changed (`A` added, `M` modified, `D` deleted), or `(no commits)`.
+`log` only reads, so it also works on a stopped run.
+
+In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...`, `interrupt ...`, `show ...` and `log ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
 Follow the feature file's `Preconditions` and `Steps` in order, one helper call per command, then its `Behind it`.
 Each feature file assumes a fresh run.
 
@@ -146,7 +182,57 @@ Each feature file assumes a fresh run.
 - Capture the action and the state it led to, not only the last output: run every `show` the map names, where it names it.
 - Check side effects as well as what is printed: the files and their hashes, the commit count, what is staged, and that a refused command left the repo unchanged.
 - Cover every entry point the map lists for the feature. One not driven is reported as `not driven`, never as verified through another.
-- There is no external system in a run, so there is no fake to use.
+- Claude Code and GitHub are the only external systems, and a run reaches each only through its fake; never put a real `claude` or `gh` in a run.
+
+## Fakes
+
+`fakes/bin/claude` and `fakes/bin/gh` stand in for Claude Code and GitHub, so a faber run that starts a session or reads a PR gets a scripted answer, the same on every run.
+Pick what each does before the faber step that reaches it:
+
+```bash
+.agents/skills/verify/verify.ts script <run> claude <json>
+.agents/skills/verify/verify.ts script <run> gh <json>
+```
+
+A claude script is a JSON array of sessions; each headless start (`-p` or `--print`) runs the next one, and a new script starts again at its first.
+It prints `script: claude, <n> sessions, next is session 0`.
+A session is an object with any of these keys, applied in this order in the folder the fake was started in:
+
+- `write`: an object mapping paths to their full text, written as given.
+- `commit`: `{"message": "<subject>", "trailers": ["Slice: S1"]}`, which stages every file and commits; trailers are optional `Key: value` lines.
+- `push`: `true` pushes `HEAD` to `origin`.
+- `tools`: how many tool calls to stream, each a `tool_use` and its `tool_result`.
+- `denials`: how many denied tool calls to stream, also listed in the result's `permission_denials`.
+- `hang`: `true` stays alive after the tool calls, with no result, until something kills it.
+- `message`: the last assistant message and the result's `result` (default `Done.`).
+- `exit`: the exit code (default 0).
+
+With `--output-format stream-json --verbose` it prints one JSON event per line, a `system` init first and a `result` last, as Claude Code does; stream-json without `--verbose` fails the way the real one does.
+A start with no session left exits 1 with `fake claude: no scripted session left`, so an unplanned session shows up as a failure.
+A gh script is `{"pr": {"url": "<url>", "isDraft": false}}`, or `{}` for no PR; `gh pr view --json url,isDraft` prints those fields, and any other gh command exits 1.
+It prints `script: gh, pr <url> (draft | ready)` or `script: gh, no pr`.
+`script` refuses anything that is not such a script, naming the wrong key.
+
+Every start of a fake is recorded, sessions or not:
+
+```bash
+.agents/skills/verify/verify.ts calls <run> claude
+.agents/skills/verify/verify.ts calls <run> gh
+```
+
+It prints `> <fake> calls: <n>`, then one `<i>. <fake> <args> (cwd <folder>, stdin <closed | open | tty>[, session <n>])` line per start, oldest first.
+`stdin open` means the caller left stdin open; a headless session needs it closed.
+A check that says faber started no session is `> claude calls: 0`.
+`calls` only reads, so it also works on a stopped run.
+
+To check a fake on its own, start it by name from a repo folder, found on the run's `PATH` with stdin closed, as faber starts it:
+
+```bash
+.agents/skills/verify/verify.ts call <run> <name>[/<folder>] <claude|gh> <args...>
+```
+
+It echoes `> cd repos/<name>[/<folder>] && <fake> <args>`, then `> found: <path>`, the fake's stdout and `[stderr] ` lines as `faber` does, then `[<fake> exit <n>]`; a hanging fake is killed after 10 seconds.
+It proves the fakes, never faber: a check on faber drives `faber`.
 
 ## Evidence
 

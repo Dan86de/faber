@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Verify helper: runs the faber CLI inside throwaway repos in one run folder,
 // with its own home and git config, and logs every call to the run's transcript.log.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type FakeName, fakeNames, type GhScript, installFakes, readCalls, writeScript } from "./fakes/fakes.ts";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const runsRoot = join(repo, ".scratch", "verify");
@@ -21,13 +22,22 @@ const usage = `usage:
   verify.ts mkdir <run> <name>/<folder>
   verify.ts write <run> <name>/<file> <text>
   verify.ts faber <run> <name>[/<folder>] [faber args...]
+  verify.ts interrupt <run> <name>[/<folder>] <INT|HUP> [faber args...]
   verify.ts show <run> <name>[/<file>]
+  verify.ts log <run> <name>
+  verify.ts commit <run> <name> <message> [--empty]
+  verify.ts remote <run> <name>
+  verify.ts script <run> <claude|gh> <json>
+  verify.ts call <run> <name>[/<folder>] <claude|gh> [args...]
+  verify.ts calls <run> <claude|gh>
   verify.ts stop <run>`;
 
 type Paths = {
   run: string;
   repos: string;
   home: string;
+  fakes: string;
+  remotes: string;
   state: string;
   transcript: string;
   evidence: string;
@@ -68,6 +78,8 @@ function paths(run: string): Paths {
     run,
     repos: join(run, "repos"),
     home: join(run, "home"),
+    fakes: join(run, "fakes"),
+    remotes: join(run, "remotes"),
     state: join(run, "run.json"),
     transcript: join(run, "transcript.log"),
     evidence: join(run, "evidence.md"),
@@ -134,11 +146,11 @@ function done(code = 0): never {
   process.exit(code);
 }
 
-// Only what faber and git need. The ceiling stops git from finding faber's own checkout
-// above the run's repos, so a folder with no `.git` is outside any repo, as it would be for a user.
+// Only what faber and git need, with the run's fake `claude` and `gh` first on PATH. The ceiling stops git
+// from finding faber's own checkout above the run's repos, so a folder with no `.git` is outside any repo.
 function runEnv(p: Paths): NodeJS.ProcessEnv {
   return {
-    PATH: process.env.PATH,
+    PATH: `${join(p.fakes, "bin")}:${process.env.PATH}`,
     HOME: p.home,
     TZ: "UTC",
     LANG: "C",
@@ -159,6 +171,7 @@ function start(): never {
   const p = paths(run);
   mkdirSync(p.home, { recursive: true });
   mkdirSync(p.repos, { recursive: true });
+  installFakes(p.fakes);
   writeFileSync(
     join(p.home, ".gitconfig"),
     "[user]\n\tname = Verify Run\n\temail = verify@example.invalid\n[init]\n\tdefaultBranch = main\n",
@@ -209,6 +222,11 @@ function doctor(p: Paths): never {
     );
   }
   if (process.version !== state.node) problems.push(`node changed since start (${state.node} -> ${process.version})`);
+  for (const name of fakeNames) {
+    const found = which(p, name);
+    if (found !== join(p.fakes, "bin", name))
+      problems.push(`fake ${name} is not first on PATH (found ${found || "none"})`);
+  }
   const alive = state.pids.filter(isAlive);
   if (alive.length) problems.push(`faber processes from this run still running: ${alive.join(", ")}`);
   // A stopped run starts nothing, so the probe only runs on a live one.
@@ -238,6 +256,11 @@ function doctor(p: Paths): never {
   }
   out("fit");
   done(0);
+}
+
+// What a command by this name resolves to on the run's PATH, the way faber would find it.
+function which(p: Paths, name: string): string {
+  return spawnSync("sh", ["-c", 'command -v "$1"', "sh", name], { env: runEnv(p), encoding: "utf8" }).stdout.trim();
 }
 
 function makeRepo(p: Paths, name: string | undefined, flags: string[]): never {
@@ -277,13 +300,19 @@ function writeFile(p: Paths, arg: string | undefined, text: string | undefined):
   done(0);
 }
 
-function faber(p: Paths, arg: string | undefined, args: string[]): never {
+// The folder `arg` names for faber to run in, refusing a stopped run or a target that is not a folder.
+function faberFolder(p: Paths, arg: string | undefined): string {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
   const t = target(p, arg);
   if (!existsSync(t.path) || !statSync(t.path).isDirectory())
     fail(`refused: ${t.path} is not a folder; make it with \`mkdir\``);
+  return t.path;
+}
+
+function faber(p: Paths, arg: string | undefined, args: string[]): never {
+  const cwd = faberFolder(p, arg);
   const child = spawnSync(process.execPath, [cli, ...args], {
-    cwd: t.path,
+    cwd,
     env: runEnv(p),
     encoding: "utf8",
     timeout: timeoutMs,
@@ -293,12 +322,62 @@ function faber(p: Paths, arg: string | undefined, args: string[]): never {
   const state = readState(p);
   state.pids.push(child.pid ?? 0);
   writeState(p, state);
-  out(`> cd ${relative(p.run, t.path)} && faber ${args.map(quote).join(" ")}`.trimEnd());
+  out(`> cd ${relative(p.run, cwd)} && faber ${args.map(quote).join(" ")}`.trimEnd());
+  echoOutput(child);
+  out(`[faber exit ${child.status ?? child.signal}]`);
+  done(child.status ?? 1);
+}
+
+// Runs faber like `faber`, and once it has started a fake claude session sends faber alone `SIG<signal>`, as
+// Ctrl-C (INT) or a closed terminal (HUP) would; a faber that starts no session runs until it ends or times out.
+async function interrupt(p: Paths, arg: string | undefined, signalArg: string | undefined, args: string[]) {
+  const cwd = faberFolder(p, arg);
+  if (signalArg !== "INT" && signalArg !== "HUP") fail("refused: name the signal to send: INT or HUP");
+  const signal = `SIG${signalArg}` as const;
+  const before = readCalls(p.fakes, "claude").length;
+  const child = spawn(process.execPath, [cli, ...args], { cwd, env: runEnv(p) });
+  child.stdin.end();
+  const state = readState(p);
+  state.pids.push(child.pid ?? 0);
+  writeState(p, state);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  let sent: number | undefined;
+  const poll = setInterval(() => {
+    const started = readCalls(p.fakes, "claude").length;
+    if (started === before) return;
+    clearInterval(poll);
+    sent = started;
+    child.kill(signal);
+  }, 20);
+  const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+  const [status, killedBy] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
+    child.on("close", (code, by) => resolve([code, by])),
+  );
+  clearInterval(poll);
+  clearTimeout(timer);
+  out(`> cd ${relative(p.run, cwd)} && faber ${args.map(quote).join(" ")}`.trimEnd());
+  echoOutput({ stdout, stderr });
+  out(
+    sent === undefined
+      ? "> sent nothing: faber started no claude session"
+      : `> sent ${signal} once claude call ${sent} started`,
+  );
+  out(`[faber exit ${status ?? killedBy}]`);
+  done(status ?? 1);
+}
+
+// A child's stdout lines as they are, its stderr lines marked `[stderr] `, and any spawn error.
+function echoOutput(child: { stdout: string; stderr: string; error?: Error }): void {
   for (const line of child.stdout.split("\n").slice(0, -1)) out(line);
   for (const line of child.stderr.split("\n").slice(0, -1)) out(`[stderr] ${line}`.trimEnd(), process.stderr);
   if (child.error) out(`helper: ${child.error.message}`, process.stderr);
-  out(`[faber exit ${child.status ?? child.signal}]`);
-  done(child.status ?? 1);
 }
 
 function listFiles(root: string, dir = root): string[] {
@@ -340,6 +419,148 @@ function show(p: Paths, arg: string | undefined): never {
   out("> git staged:");
   const staged = runGit(p, t.root, "diff", "--cached", "--name-only").stdout.trim();
   out(staged || "(nothing staged)");
+  // Only a repo given a remote by `remote` has one, so older listings keep their exact lines.
+  if (runGit(p, t.root, "remote").stdout.trim()) {
+    out("> git remote origin:");
+    const refs = runGit(p, t.root, "ls-remote", "--heads", "origin").stdout.trim();
+    for (const line of refs ? refs.split("\n") : []) {
+      const [sha = "", ref = ""] = line.split("\t");
+      out(`${sha.slice(0, 7)} ${ref.replace("refs/heads/", "")}`);
+    }
+    if (!refs) out("(no branches)");
+  }
+  done(0);
+}
+
+// The repo `arg` names for `command`, refusing a path inside it or a folder that is not a git repo.
+function repoTarget(p: Paths, arg: string | undefined, command: string): ReturnType<typeof target> {
+  const t = target(p, arg);
+  if (t.rel) fail(`refused: ${command} takes a repo name, not a path inside it`);
+  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  return t;
+}
+
+// The commits `HEAD` reaches, newest first, each with the paths it changed, so a commit faber made is evidence.
+function log(p: Paths, arg: string | undefined): never {
+  const t = repoTarget(p, arg, "log");
+  const branch = runGit(p, t.root, "branch", "--show-current").stdout.trim() || "(detached)";
+  out(`> git log in ${relative(p.run, t.root)}, on ${branch}`);
+  const shas = runGit(p, t.root, "rev-list", "HEAD").stdout.trim();
+  if (!shas) out("(no commits)");
+  for (const sha of shas ? shas.split("\n") : []) {
+    out(runGit(p, t.root, "log", "-1", "--format=%h %s", sha).stdout.trim());
+    const changed = runGit(p, t.root, "show", "--name-status", "--format=", sha).stdout.trim();
+    for (const line of changed ? changed.split("\n") : []) out(`  ${line.replaceAll("\t", " ")}`);
+  }
+  done(0);
+}
+
+// Commits every file in the repo, or with `--empty` no file at all, the way a sign-off by hand does.
+function commitRepo(p: Paths, name: string | undefined, message: string | undefined, flags: string[]): never {
+  if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
+  const t = repoTarget(p, name, "commit");
+  if (!message || message.startsWith("--")) fail("refused: give the commit message as one argument");
+  const unknown = flags.filter((flag) => flag !== "--empty");
+  if (unknown.length) fail(`refused: commit takes only --empty after the message, not ${unknown.join(" ")}`);
+  const empty = flags.includes("--empty");
+  let files = "";
+  if (empty) {
+    const dirty = runGit(p, t.root, "status", "--porcelain", "--untracked-files=all").stdout.trim();
+    if (dirty) fail(`refused: --empty needs a clean tree, and ${t.name} has uncommitted changes`);
+  } else {
+    runGit(p, t.root, "add", "-A");
+    files = runGit(p, t.root, "diff", "--cached", "--name-only").stdout.trim();
+    if (!files) fail(`refused: nothing to commit in ${t.name}`);
+  }
+  const commit = runGit(p, t.root, "commit", "-q", ...(empty ? ["--allow-empty"] : []), "-m", message);
+  if (commit.status !== 0) fail(`git commit failed: ${commit.stderr.trim()}`);
+  const sha = runGit(p, t.root, "rev-parse", "--short", "HEAD").stdout.trim();
+  const branch = runGit(p, t.root, "branch", "--show-current").stdout.trim();
+  const count = files ? files.split("\n").length : 0;
+  out(`commit: ${sha} ${message.split("\n")[0]} (${branch}, ${count} ${count === 1 ? "file" : "files"})`);
+  done(0);
+}
+
+// A bare repo outside `repos/` as the repo's origin, with every branch it has pushed, like a fresh GitHub clone.
+function addRemote(p: Paths, name: string | undefined): never {
+  if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
+  const t = repoTarget(p, name, "remote");
+  if (runGit(p, t.root, "remote").stdout.trim()) fail(`refused: ${t.name} already has a remote`);
+  const bare = join(p.remotes, `${t.name}.git`);
+  mkdirSync(p.remotes, { recursive: true });
+  const init = runGit(p, p.remotes, "init", "-q", "--bare", bare);
+  if (init.status !== 0) fail(`git init --bare failed: ${init.stderr.trim()}`);
+  runGit(p, t.root, "remote", "add", "origin", bare);
+  const branches = runGit(p, t.root, "branch", "--format=%(refname:short)").stdout.trim();
+  if (branches) {
+    const push = runGit(p, t.root, "push", "-q", "-u", "origin", "--all");
+    if (push.status !== 0) fail(`git push failed: ${push.stderr.trim()}`);
+  }
+  out(`remote: origin -> ${bare}, pushed ${branches ? branches.split("\n").join(", ") : "nothing yet"}`);
+  done(0);
+}
+
+function fakeName(arg: string | undefined): FakeName {
+  const name = fakeNames.find((fake) => fake === arg);
+  if (!name) fail(`refused: name a fake: ${fakeNames.join(" or ")}`);
+  return name;
+}
+
+function script(p: Paths, nameArg: string | undefined, json: string | undefined): never {
+  if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
+  const name = fakeName(nameArg);
+  if (json === undefined) fail("refused: give the script as one JSON argument");
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch (error) {
+    fail(`refused: the script is not JSON: ${(error as Error).message}`);
+  }
+  try {
+    writeScript(p.fakes, name, value);
+  } catch (error) {
+    fail(`refused: ${(error as Error).message}`);
+  }
+  if (name === "claude") out(`script: claude, ${(value as unknown[]).length} sessions, next is session 0`);
+  else {
+    const { pr } = value as GhScript;
+    out(`script: gh, ${pr ? `pr ${pr.url} (${pr.isDraft ? "draft" : "ready"})` : "no pr"}`);
+  }
+  done(0);
+}
+
+// Runs a fake by name from a repo folder, found on the run's PATH with stdin closed, the way faber starts it.
+function callFake(p: Paths, arg: string | undefined, nameArg: string | undefined, args: string[]): never {
+  if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
+  const t = target(p, arg);
+  const name = fakeName(nameArg);
+  if (!existsSync(t.path) || !statSync(t.path).isDirectory())
+    fail(`refused: ${t.path} is not a folder; make it with \`mkdir\``);
+  out(`> cd ${relative(p.run, t.path)} && ${[name, ...args].map(quote).join(" ")}`);
+  out(`> found: ${which(p, name) || "(not on PATH)"}`);
+  const child = spawnSync(name, args, {
+    cwd: t.path,
+    env: runEnv(p),
+    encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  echoOutput(child);
+  out(`[${name} exit ${child.status ?? child.signal}]`);
+  done(child.status ?? 1);
+}
+
+function calls(p: Paths, nameArg: string | undefined): never {
+  const name = fakeName(nameArg);
+  const all = readCalls(p.fakes, name);
+  out(`> ${name} calls: ${all.length}`);
+  for (const [i, call] of all.entries()) {
+    const session = call.session === null ? "" : `, session ${call.session}`;
+    out(
+      `${i + 1}. ${[name, ...call.argv].map(quote).join(" ")} (cwd ${relative(p.run, call.cwd)}, stdin ${call.stdin}${session})`,
+    );
+  }
   done(0);
 }
 
@@ -376,8 +597,29 @@ switch (command) {
   case "faber":
     faber(openRun(runArg), rest[0], rest.slice(1));
     break;
+  case "interrupt":
+    await interrupt(openRun(runArg), rest[0], rest[1], rest.slice(2));
+    break;
   case "show":
     show(openRun(runArg), rest[0]);
+    break;
+  case "log":
+    log(openRun(runArg), rest[0]);
+    break;
+  case "commit":
+    commitRepo(openRun(runArg), rest[0], rest[1], rest.slice(2));
+    break;
+  case "remote":
+    addRemote(openRun(runArg), rest[0]);
+    break;
+  case "script":
+    script(openRun(runArg), rest[0], rest[1]);
+    break;
+  case "call":
+    callFake(openRun(runArg), rest[0], rest[1], rest.slice(2));
+    break;
+  case "calls":
+    calls(openRun(runArg), rest[0]);
     break;
   case "stop":
     stop(openRun(runArg));

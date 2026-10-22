@@ -14,8 +14,10 @@ In this checkout it runs as `node src/cli.ts`.
 
 ## Driving conventions
 
-- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir` and `show` are helper commands too.
+- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir`, `show`, `log` and `interrupt` are helper commands too.
 - Make the files a step expects to exist with `write`, and the folders with `mkdir`, before running faber.
+- Commit the files a step expects to be committed with `commit`, and give a repo a bare `origin` with `remote`; both are helper commands.
+- faber reaches Claude Code and GitHub only through the run's fake `claude` and `gh`: pick what each does with `script` before the step, and read what faber started with `calls`.
 - Each feature file names a `show` after every step that might write; it lists every file with its hash, the commit count, and what is staged. Run exactly the `show`s the file names.
 - Every step and every `Behind it` line is a check; an entry point with no step of its own is not driven.
 - Quoted output is how the output starts; `[stderr]` marks a line faber printed to stderr.
@@ -39,4 +41,13 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Run init again](./rerun.md): a second run keeps every file byte for byte, and `.gitignore` gets `.scratch/` once.
 - [Respect existing files](./existing-files.md): older standards and glossary files are kept as fallbacks, and a `CLAUDE.md` without `@AGENTS.md` gets a warning.
 - [Git root](./git-root.md): init writes at the repo's top from any subfolder, and refuses outside a repo.
+- [Run](./run.md): `faber run <slug>` refuses a run with no slug, outside git, with a dirty tree, or with no committed decision record, before starting any session.
+- [Write the spec](./run-spec.md): `faber run <slug>` from a committed decision record runs write-spec headless on `slices/<slug>`, commits and pushes only `spec.md`, and keeps a run folder.
+- [Cut the slices](./run-slices.md): `faber run <slug>` with a committed spec runs write-slices headless, commits and pushes only `slices.json`, and stops on a stray path or nothing written.
+- [Build the slices](./run-build.md): `faber run <slug>` with both planning files committed runs one implement-slice session per ready slice while each adds its `Slice:` trailer, and stops on a slice that commits nothing.
+- [Go on past a sign-off](./run-signoff.md): `faber run <slug>` goes on past a slice that adds `Slice-Pending:` with every slice that does not depend on it, and ends listing every slice that waits for sign-off.
+- [Stop on a failed session](./run-limits.md): `faber run <slug>` stops when a session exits non-zero, hits a permission denial, or passes `--timeout` or `--max-tools`, killing it if it still runs.
+- [Stop on an interrupt](./run-interrupt.md): Ctrl-C or a closed terminal during `faber run <slug>` kills the running session, leaves the tree, and ends with `stopped: interrupted`.
+- [Resume a stopped run](./run-resume.md): `faber run <slug>` again after a stop, a kill or a sign-off made by hand resumes from git, repeating no step git records and starting no session twice in a run.
+- [Close the branch](./run-close.md): `faber run <slug>` with every slice done runs one closing implement-slice session, then ends with `done: PR ready <url>` once `gh` reports the PR is no longer a draft.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.
