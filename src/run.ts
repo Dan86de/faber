@@ -148,15 +148,15 @@ export async function run(cwd: string, args: string[], output: RunOutput, interr
   };
 
   const spec = `${feature}/spec.md`;
+  const slicesFile = `${feature}/slices.json`;
   const stopped =
     (await plan("write-spec", `${feature}/decisions.md`, spec, `Write the spec for ${slug}`)) ??
-    (await plan("write-slices", spec, `${feature}/slices.json`, `Cut ${slug} into slices`));
+    (await plan("write-slices", spec, slicesFile, `Cut ${slug} into slices`));
   if (stopped !== undefined) return stopped;
 
   // Each slice runs in its own implement-slice session, picked from the trailers on the branch the way the skill
   // picks it; the trailers it adds, never its reply, decide whether the run goes on. A slice that waits for sign-off
   // goes on too, with whatever does not depend on it, and the run ends listing it.
-  const slicesFile = `${feature}/slices.json`;
   const parsed = parseSlices(committedText(root, "HEAD", slicesFile) ?? "");
   if ("problem" in parsed) return stop(`${slicesFile} ${parsed.problem}`);
   let trailers = sliceTrailers(root, base.ref);

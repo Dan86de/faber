@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type FakeName, fakeNames, installFakes, readCalls, writeScript } from "./fakes/fakes.ts";
+import { type FakeName, fakeNames, type GhScript, installFakes, readCalls, writeScript } from "./fakes/fakes.ts";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const runsRoot = join(repo, ".scratch", "verify");
@@ -432,11 +432,17 @@ function show(p: Paths, arg: string | undefined): never {
   done(0);
 }
 
+// The repo `arg` names for `command`, refusing a path inside it or a folder that is not a git repo.
+function repoTarget(p: Paths, arg: string | undefined, command: string): ReturnType<typeof target> {
+  const t = target(p, arg);
+  if (t.rel) fail(`refused: ${command} takes a repo name, not a path inside it`);
+  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  return t;
+}
+
 // The commits `HEAD` reaches, newest first, each with the paths it changed, so a commit faber made is evidence.
 function log(p: Paths, arg: string | undefined): never {
-  const t = target(p, arg);
-  if (t.rel) fail("refused: log takes a repo name, not a path inside it");
-  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  const t = repoTarget(p, arg, "log");
   const branch = runGit(p, t.root, "branch", "--show-current").stdout.trim() || "(detached)";
   out(`> git log in ${relative(p.run, t.root)}, on ${branch}`);
   const shas = runGit(p, t.root, "rev-list", "HEAD").stdout.trim();
@@ -452,9 +458,7 @@ function log(p: Paths, arg: string | undefined): never {
 // Commits every file in the repo, or with `--empty` no file at all, the way a sign-off by hand does.
 function commitRepo(p: Paths, name: string | undefined, message: string | undefined, flags: string[]): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
-  const t = target(p, name);
-  if (t.rel) fail("refused: commit takes a repo name, not a path inside it");
-  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  const t = repoTarget(p, name, "commit");
   if (!message || message.startsWith("--")) fail("refused: give the commit message as one argument");
   const unknown = flags.filter((flag) => flag !== "--empty");
   if (unknown.length) fail(`refused: commit takes only --empty after the message, not ${unknown.join(" ")}`);
@@ -480,9 +484,7 @@ function commitRepo(p: Paths, name: string | undefined, message: string | undefi
 // A bare repo outside `repos/` as the repo's origin, with every branch it has pushed, like a fresh GitHub clone.
 function addRemote(p: Paths, name: string | undefined): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
-  const t = target(p, name);
-  if (t.rel) fail("refused: remote takes a repo name, not a path inside it");
-  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  const t = repoTarget(p, name, "remote");
   if (runGit(p, t.root, "remote").stdout.trim()) fail(`refused: ${t.name} already has a remote`);
   const bare = join(p.remotes, `${t.name}.git`);
   mkdirSync(p.remotes, { recursive: true });
@@ -521,7 +523,7 @@ function script(p: Paths, nameArg: string | undefined, json: string | undefined)
   }
   if (name === "claude") out(`script: claude, ${(value as unknown[]).length} sessions, next is session 0`);
   else {
-    const { pr } = value as { pr?: { url: string; isDraft: boolean } };
+    const { pr } = value as GhScript;
     out(`script: gh, ${pr ? `pr ${pr.url} (${pr.isDraft ? "draft" : "ready"})` : "no pr"}`);
   }
   done(0);
