@@ -6,6 +6,7 @@ Read `README.md` for the boundary before changing anything.
 ## Rules
 
 - Never put a method in this repo: if it would work by hand, it belongs in the skills repo as a skill.
+- Prose that drives faber's own commands, like the coordinator's, lives here and calls a skill for every judgment.
 - Read and write only paths listed in the skills repo's project file contract; add a path there first.
 - Decide state from git, never by parsing an agent's reply.
 - Every harness-specific call goes through its adapter.
