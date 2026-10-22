@@ -38,3 +38,4 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Init](./init.md): the project files `faber init` creates in an empty repo, and that it commits nothing.
 - [Run init again](./rerun.md): a second run keeps every file byte for byte, and `.gitignore` gets `.scratch/` once.
 - [Respect existing files](./existing-files.md): older standards and glossary files are kept as fallbacks, and a `CLAUDE.md` without `@AGENTS.md` gets a warning.
+- [Git root](./git-root.md): init writes at the repo's top from any subfolder, and refuses outside a repo.

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { gitRoot } from "./git.ts";
 import { init } from "./init.ts";
 
 const usage = `usage: faber <command>
@@ -11,7 +12,13 @@ const [command] = process.argv.slice(2);
 if (command === undefined || command === "help" || command === "--help" || command === "-h") {
   console.log(usage);
 } else if (command === "init") {
-  for (const line of init(process.cwd())) console.log(line);
+  const repo = gitRoot(process.cwd());
+  if ("error" in repo) {
+    console.error(`faber: ${repo.error}; run faber init in a git work tree`);
+    process.exitCode = 1;
+  } else {
+    for (const line of init(repo.root)) console.log(line);
+  }
 } else {
   console.error(`faber: unknown command "${command}"\n\n${usage}`);
   process.exitCode = 1;

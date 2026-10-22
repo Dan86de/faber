@@ -2,16 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
-import { git, runFaber, tempRepo } from "./faber.ts";
-
-const projectFiles = [
-  "spec/vision.md",
-  "spec/glossary.md",
-  ".agents/coding-standards.md",
-  "AGENTS.md",
-  "CLAUDE.md",
-  ".gitignore",
-];
+import { git, projectFiles, runFaber, tempRepo } from "./faber.ts";
 
 test("faber init in an empty repo creates every project file and ends with the next line", (t) => {
   const repo = tempRepo(t);
