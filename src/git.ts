@@ -53,3 +53,51 @@ export function defaultBranch(root: string): { name: string; ref: string } | und
 export function committedAt(root: string, ref: string, path: string): boolean {
   return git(root, "cat-file", "-e", `${ref}:${path}`).status === 0;
 }
+
+// Whether git ignores `path`, so a run can write there without dirtying the tree.
+export function isIgnored(root: string, path: string): boolean {
+  return git(root, "check-ignore", "--quiet", "--no-index", path).status === 0;
+}
+
+// Switches to `branch`, creating it from `from` when it does not exist yet; returns git's complaint on failure.
+export function switchBranch(root: string, branch: string, from: string): { created: boolean } | { error: string } {
+  const exists = git(root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).status === 0;
+  const result = exists
+    ? git(root, "switch", "--quiet", branch)
+    : git(root, "switch", "--quiet", "--no-track", "--create", branch, from);
+  if (result.status !== 0) return { error: `git switch failed: ${result.stderr.trim()}` };
+  return { created: !exists };
+}
+
+// The commit `HEAD` points at.
+export function headCommit(root: string): string {
+  return git(root, "rev-parse", "HEAD").stdout.trim();
+}
+
+// Every path a session touched since `since`: those its commits changed and those left dirty, sorted and unique.
+export function touchedSince(root: string, since: string): { paths: string[] } | { error: string } {
+  const committed = git(root, "diff", "--name-only", "-z", since, "HEAD");
+  if (committed.status !== 0) return { error: `git diff failed: ${committed.stderr.trim()}` };
+  const dirty = dirtyPaths(root);
+  if ("error" in dirty) return dirty;
+  const paths = new Set([...committed.stdout.split("\0").filter(Boolean), ...dirty.paths]);
+  return { paths: [...paths].sort() };
+}
+
+// Commits only `path` with `message`, whatever else is staged.
+export function commitPath(root: string, path: string, message: string): { error: string } | undefined {
+  for (const args of [
+    ["add", "--", path],
+    ["commit", "--quiet", "--message", message, "--", path],
+  ]) {
+    const result = git(root, ...args);
+    if (result.status !== 0) return { error: `git ${args[0]} failed: ${result.stderr.trim()}` };
+  }
+  return undefined;
+}
+
+// Pushes `branch` to origin and sets it as the upstream.
+export function pushBranch(root: string, branch: string): { error: string } | undefined {
+  const result = git(root, "push", "--quiet", "--set-upstream", "origin", branch);
+  return result.status === 0 ? undefined : { error: `git push failed: ${result.stderr.trim()}` };
+}

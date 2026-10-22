@@ -151,7 +151,16 @@ Two `show` listings with the same lines prove the files are byte-identical.
 With a file it prints `> cat repos/<name>/<file>`, then the file, or `(no such file)`, and `(no newline at end of file)` when the file does not end in one.
 `show` only reads, so it also works on a stopped run, and it is logged like every other call, so the stored state becomes evidence rather than a claim.
 
-In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...` and `show ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
+To read which commits a step made:
+
+```bash
+.agents/skills/verify/verify.ts log <run> <name>
+```
+
+It prints `> git log in repos/<name>, on <branch>`, then every commit `HEAD` reaches, newest first, as `<short sha> <subject>`, each followed by one `  <status> <path>` line per path it changed (`A` added, `M` modified, `D` deleted), or `(no commits)`.
+`log` only reads, so it also works on a stopped run.
+
+In a feature file, `faber <run> <name> <args>`, `repo <run> <name>`, `write ...`, `mkdir ...`, `show ...` and `log ...` are this helper's commands: prefix each with `.agents/skills/verify/verify.ts`.
 Follow the feature file's `Preconditions` and `Steps` in order, one helper call per command, then its `Behind it`.
 Each feature file assumes a fresh run.
 

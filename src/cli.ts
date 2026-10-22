@@ -22,9 +22,10 @@ if (command === undefined || command === "help" || command === "--help" || comma
     for (const line of init(repo.root)) console.log(line);
   }
 } else if (command === "run") {
-  const outcome = run(process.cwd(), args);
-  for (const line of outcome.lines) console.error(line);
-  process.exitCode = outcome.code;
+  process.exitCode = await run(process.cwd(), args, {
+    refuse: (line) => console.error(line),
+    print: (line) => console.log(line),
+  });
 } else {
   console.error(`faber: unknown command "${command}"\n\n${usage}`);
   process.exitCode = 1;

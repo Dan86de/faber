@@ -23,6 +23,7 @@ const usage = `usage:
   verify.ts write <run> <name>/<file> <text>
   verify.ts faber <run> <name>[/<folder>] [faber args...]
   verify.ts show <run> <name>[/<file>]
+  verify.ts log <run> <name>
   verify.ts commit <run> <name> <message>
   verify.ts remote <run> <name>
   verify.ts script <run> <claude|gh> <json>
@@ -379,6 +380,23 @@ function show(p: Paths, arg: string | undefined): never {
   done(0);
 }
 
+// The commits `HEAD` reaches, newest first, each with the paths it changed, so a commit faber made is evidence.
+function log(p: Paths, arg: string | undefined): never {
+  const t = target(p, arg);
+  if (t.rel) fail("refused: log takes a repo name, not a path inside it");
+  if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
+  const branch = runGit(p, t.root, "branch", "--show-current").stdout.trim() || "(detached)";
+  out(`> git log in ${relative(p.run, t.root)}, on ${branch}`);
+  const shas = runGit(p, t.root, "rev-list", "HEAD").stdout.trim();
+  if (!shas) out("(no commits)");
+  for (const sha of shas ? shas.split("\n") : []) {
+    out(runGit(p, t.root, "log", "-1", "--format=%h %s", sha).stdout.trim());
+    const changed = runGit(p, t.root, "show", "--name-status", "--format=", sha).stdout.trim();
+    for (const line of changed ? changed.split("\n") : []) out(`  ${line.replaceAll("\t", " ")}`);
+  }
+  done(0);
+}
+
 function commitAll(p: Paths, name: string | undefined, message: string | undefined): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
   const t = target(p, name);
@@ -517,6 +535,9 @@ switch (command) {
     break;
   case "show":
     show(openRun(runArg), rest[0]);
+    break;
+  case "log":
+    log(openRun(runArg), rest[0]);
     break;
   case "commit":
     commitAll(openRun(runArg), rest[0], rest[1]);

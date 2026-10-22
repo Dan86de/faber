@@ -14,7 +14,7 @@ In this checkout it runs as `node src/cli.ts`.
 
 ## Driving conventions
 
-- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir` and `show` are helper commands too.
+- `faber <run> <name> <args>` in a step is the verify helper's `faber` command, never the `faber` binary: it runs faber from the named repo, or a folder in it. `repo`, `write`, `mkdir`, `show` and `log` are helper commands too.
 - Make the files a step expects to exist with `write`, and the folders with `mkdir`, before running faber.
 - Commit the files a step expects to be committed with `commit`, and give a repo a bare `origin` with `remote`; both are helper commands.
 - faber reaches Claude Code and GitHub only through the run's fake `claude` and `gh`: pick what each does with `script` before the step, and read what faber started with `calls`.
@@ -42,4 +42,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Respect existing files](./existing-files.md): older standards and glossary files are kept as fallbacks, and a `CLAUDE.md` without `@AGENTS.md` gets a warning.
 - [Git root](./git-root.md): init writes at the repo's top from any subfolder, and refuses outside a repo.
 - [Run](./run.md): `faber run <slug>` refuses a run with no slug, outside git, with a dirty tree, or with no committed decision record, before starting any session.
+- [Write the spec](./run-spec.md): `faber run <slug>` from a committed decision record runs write-spec headless on `slices/<slug>`, commits and pushes only `spec.md`, and keeps a run folder.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

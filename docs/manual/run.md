@@ -36,4 +36,5 @@ Each step's two `show` listings match line for line: a refused run writes, stage
 - The default branch is what `origin/HEAD` names, else the first of git's `init.defaultBranch`, `main` and `master` that exists; a record committed only on another branch does not count.
 - The dirty list includes untracked files one by one, but never files `.gitignore` covers, so a `.scratch/` folder an ignored run left does not block the next run.
 - A slug is a folder name of lowercase letters, digits and dashes; anything else is refused before git is read.
-- Until faber can start its sessions, a run that passes every check ends with `faber: <slug> is ready to run, but faber cannot start its sessions yet` and exit 1.
+- A run also refuses, before switching branch, when git does not ignore `.scratch/faber/<slug>/`, since its own run folder would dirty the tree.
+- A run that passes every check goes on as [Write the spec](./run-spec.md) describes.
