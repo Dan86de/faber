@@ -22,7 +22,7 @@ test("faber run with no slug prints its usage and exits 1", (t) => {
   const result = runFaberWithFakes(f, tempRepo(t), "run");
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "usage: faber run <slug>\n");
+  assert.equal(result.stderr, "usage: faber run <slug> [--timeout <minutes>] [--max-tools <n>]\n");
   assert.equal(f.calls("claude").length, 0);
 });
 
@@ -577,4 +577,80 @@ test("faber run ends listing the slices already waiting for sign-off when nothin
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\nstopped: S2, S10 wait for sign-off\n$/);
   assert.equal(f.calls("claude").length, 0);
+});
+
+test("faber run refuses limits it cannot read, and starts no session", (t) => {
+  const f = fakes(t);
+  const { repo } = readyRepo(t);
+  const before = state(repo);
+  for (const [args, stderr] of [
+    [["--timeout"], "usage: faber run <slug> [--timeout <minutes>] [--max-tools <n>]"],
+    [["--bogus"], "usage: faber run <slug> [--timeout <minutes>] [--max-tools <n>]"],
+    [["--timeout", "0"], 'faber: --timeout takes minutes above 0 and up to 35000, such as 90 or 0.5, not "0"'],
+    [["--timeout=1e3"], 'faber: --timeout takes minutes above 0 and up to 35000, such as 90 or 0.5, not "1e3"'],
+    [["--timeout", "36000"], 'faber: --timeout takes minutes above 0 and up to 35000, such as 90 or 0.5, not "36000"'],
+    [["--max-tools", "1.5"], 'faber: --max-tools takes a whole number of tool calls above 0, such as 900, not "1.5"'],
+    [["--max-tools", "0"], 'faber: --max-tools takes a whole number of tool calls above 0, such as 900, not "0"'],
+  ] satisfies [string[], string][]) {
+    const result = runFaberWithFakes(f, repo, "run", "demo", ...args);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, `${stderr}\n`);
+  }
+  assert.equal(state(repo), before);
+  assert.equal(f.calls("claude").length, 0);
+});
+
+test("faber run stops on a permission denial even when the slice committed its trailer", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ ...builds("S1"), denials: 1, message: "Could not push." }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /\nS1: ended, exit 0, 2 tool calls\n\| Could not push\.\nstopped: S1 hit a permission denial\n$/,
+  );
+  assert.equal(f.calls("claude").length, 1);
+});
+
+test("faber run stops when write-spec hits a permission denial, and commits nothing", (t) => {
+  const { repo, before, result } = stopsAfter(t, { write: { "spec/features/demo/spec.md": "# Spec\n" }, denials: 2 });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\n\| Last words\.\nstopped: write-spec hit a permission denial\n$/);
+  assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+  assert.equal(git(repo, "status", "--porcelain").stdout, "?? spec/features/demo/spec.md\n");
+});
+
+test("faber run kills a session that runs past --timeout and stops", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ write: { "half.txt": "half\n" }, tools: 1, hang: true }]);
+  const started = Date.now();
+  const result = runFaberWithFakes(f, repo, "run", "demo", "--timeout=.01");
+  assert.ok(Date.now() - started < 5_000, "the session was killed at its timeout");
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /\nS1: ended, exit 143, 1 tool call\nstopped: S1 ran past \.01 minutes\n$/);
+  assert.equal(f.calls("claude").length, 1);
+  assert.equal(git(repo, "status", "--porcelain").stdout, "?? half.txt\n");
+});
+
+test("faber run kills a session that passes --max-tools and stops", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ tools: 5, hang: true }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo", "--max-tools", "3");
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nS1: ended, exit 143, 4 tool calls\nstopped: S1 passed 3 tool calls\n$/);
+  assert.equal(f.calls("claude").length, 1);
+});
+
+test("faber run lets a session make exactly --max-tools tool calls", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [{ ...builds("S1"), tools: 3 }, {}]);
+  const result = runFaberWithFakes(f, repo, "run", "demo", "--max-tools", "3");
+  assert.match(result.stdout, /\nS1: ended, exit 0, 3 tool calls\nS2: started\n/);
+  assert.match(result.stdout, /\nstopped: S2 committed nothing\n$/);
 });

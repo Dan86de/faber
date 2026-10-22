@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import {
   commitPath,
   committedAt,
@@ -14,10 +15,17 @@ import {
   switchBranch,
   touchedSince,
 } from "./git.ts";
-import { runSession, type SessionResult } from "./harness/claude.ts";
+import { type Limits, runSession, type SessionResult } from "./harness/claude.ts";
 import { nextReady, parseSlices, waiting } from "./slices.ts";
 
-export const runUsage = "usage: faber run <slug>";
+export const runUsage = "usage: faber run <slug> [--timeout <minutes>] [--max-tools <n>]";
+
+// Each session's limits unless the command line overrides them: 90 minutes and 900 tool calls.
+const defaultTimeout = "90";
+const defaultMaxTools = "900";
+// Node fires a timer longer than 2^31 - 1 ms, about 35791 minutes, at once, so a longer limit is refused.
+const maxTimeout = 35_000;
+const flags = { timeout: { type: "string" }, "max-tools": { type: "string" } } as const;
 
 // Where a run's lines go: a refusal before the run folder exists goes to stderr, everything after to stdout and run.log.
 export type RunOutput = { refuse(line: string): void; print(line: string): void };
@@ -25,15 +33,16 @@ export type RunOutput = { refuse(line: string): void; print(line: string): void 
 // A feature slug, the folder name under `spec/features/`.
 const slugPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-// Carries the feature `args[0]` names from its committed decision record as far as faber can take it, and returns
+// Carries the feature `args` names from its committed decision record as far as faber can take it, and returns
 // the exit code. Every refusal reads git alone and changes nothing; only a run that passes them switches branch.
 export async function run(cwd: string, args: string[], output: RunOutput): Promise<number> {
   const refuse = (...lines: string[]) => {
     for (const line of lines) output.refuse(line);
     return 1;
   };
-  const [slug, ...rest] = args;
-  if (slug === undefined || rest.length > 0) return refuse(runUsage);
+  const options = readArgs(args);
+  if ("problem" in options) return refuse(options.problem);
+  const { slug, timeout, maxTools, limits } = options;
   if (!slugPattern.test(slug)) {
     return refuse(`faber: "${slug}" is not a feature slug; use lowercase letters, digits and dashes`);
   }
@@ -87,9 +96,19 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
       args: input,
       cwd: root,
       transcript: join(root, folder, `${name}.jsonl`),
+      limits,
     });
     say(`${name}: ended, exit ${session.exit}, ${session.tools} tool call${session.tools === 1 ? "" : "s"}`);
     return session;
+  };
+  // Why a session that ended stops the run whatever it left in git, or undefined; a limit it passed comes first,
+  // since faber killed it for that, then a denial, which a non-zero exit may only follow from.
+  const failed = (name: string, session: SessionResult) => {
+    if (session.killed === "timeout") return `${name} ran past ${timeout} minutes`;
+    if (session.killed === "tools") return `${name} passed ${maxTools} tool calls`;
+    if (session.denials > 0) return `${name} hit a permission denial`;
+    if (session.exit !== 0) return `${name} exited ${session.exit}`;
+    return undefined;
   };
 
   // A planning phase runs while its file is not committed on the branch; faber commits only that file, since the
@@ -99,7 +118,8 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     if (committedAt(root, "HEAD", file)) return undefined;
     const before = headCommit(root);
     const session = await start(phase, phase, input);
-    if (session.exit !== 0) return stop(`${phase} exited ${session.exit}`, session.lastMessage);
+    const phaseFailed = failed(phase, session);
+    if (phaseFailed) return stop(phaseFailed, session.lastMessage);
     const touched = touchedSince(root, before);
     if ("error" in touched) return stop(touched.error, session.lastMessage);
     if (touched.paths.length === 0) return stop(`${phase} wrote nothing`, session.lastMessage);
@@ -135,7 +155,8 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     id = nextReady(parsed.slices, trailers.done, trailers.pending)
   ) {
     const session = await start(id, "implement-slice", `${slicesFile} ${id}`);
-    if (session.exit !== 0) return stop(`${id} exited ${session.exit}`, session.lastMessage);
+    const sliceFailed = failed(id, session);
+    if (sliceFailed) return stop(sliceFailed, session.lastMessage);
     const after = sliceTrailers(root, base.ref);
     if ("error" in after) return stop(after.error, session.lastMessage);
     if (!after.done.has(id) && !after.pending.has(id)) return stop(`${id} committed nothing`, session.lastMessage);
@@ -152,6 +173,32 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
   }
   // Closing the branch lands in a later slice; until then a run with every slice done stops here.
   return stop("closing the branch is not built yet");
+}
+
+// The slug and limits `args` give, each limit as typed for the status line, or the line that refuses them.
+function readArgs(
+  args: string[],
+): { slug: string; timeout: string; maxTools: string; limits: Limits } | { problem: string } {
+  const config = { args, options: flags, allowPositionals: true, strict: true } as const;
+  let parsed: ReturnType<typeof parseArgs<typeof config>>;
+  try {
+    parsed = parseArgs(config);
+  } catch {
+    return { problem: runUsage };
+  }
+  const [slug, ...rest] = parsed.positionals;
+  if (slug === undefined || rest.length > 0) return { problem: runUsage };
+  const { timeout = defaultTimeout, "max-tools": maxTools = defaultMaxTools } = parsed.values;
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(timeout) || Number(timeout) === 0 || Number(timeout) > maxTimeout) {
+    return {
+      problem: `faber: --timeout takes minutes above 0 and up to ${maxTimeout}, such as 90 or 0.5, not "${timeout}"`,
+    };
+  }
+  if (!/^\d+$/.test(maxTools) || Number(maxTools) === 0) {
+    return { problem: `faber: --max-tools takes a whole number of tool calls above 0, such as 900, not "${maxTools}"` };
+  }
+  const limits = { timeoutMs: Number(timeout) * 60_000, maxTools: Number(maxTools) };
+  return { slug, timeout, maxTools, limits };
 }
 
 // Makes `<runs><timestamp>/` in UTC, with a counter when two runs start in the same second, and returns it.
