@@ -4,8 +4,8 @@ A user installs faber from npm and runs `faber init` from their own shell, with 
 
 ## Entry points
 
-- `npm install --global faber`, then `faber` on the PATH.
-- `faber` installed as a project dependency and run from `node_modules/.bin/faber`.
+- `npm install --global @dan86de/faber`, then `faber` on the PATH.
+- `@dan86de/faber` installed as a project dependency and run from `node_modules/.bin/faber`.
 
 ## Steps
 

@@ -22,14 +22,14 @@ function npm(cwd: string, scratch: string, ...args: string[]) {
   });
   if (child.error) throw child.error;
   assert.equal(child.status, 0, child.stderr);
-  return child.stdout;
+  return child;
 }
 
 test("faber installed from a packed tarball runs init from node_modules", (t) => {
   const scratch = tempDir(t);
-  const [{ filename, files }] = JSON.parse(npm(repoRoot, scratch, "pack", "--json", "--pack-destination", scratch)) as [
-    { filename: string; files: { path: string }[] },
-  ];
+  const [{ filename, files }] = JSON.parse(
+    npm(repoRoot, scratch, "pack", "--json", "--pack-destination", scratch).stdout,
+  ) as [{ filename: string; files: { path: string }[] }];
 
   const paths = files.map((file) => file.path);
   for (const path of ["dist/cli.js", "templates/gitignore", "README.md", "LICENSE", "package.json"]) {
@@ -40,6 +40,10 @@ test("faber installed from a packed tarball runs init from node_modules", (t) =>
     [],
     "the tarball holds no TypeScript sources",
   );
+
+  // npm publish rewrites a package.json it finds invalid, such as a bin path it rejects, and npm pack does not.
+  const publish = npm(repoRoot, scratch, "publish", "--dry-run");
+  assert.ok(!publish.stderr.includes("auto-corrected"), publish.stderr);
 
   const app = join(scratch, "app");
   mkdirSync(app);

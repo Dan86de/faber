@@ -1,15 +1,15 @@
 {
-  "name": "faber",
+  "name": "@dan86de/faber",
   "version": "0.1.0",
   "description": "The harness that runs Dan86de/skills unattended",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Dan86de/faber"
+    "url": "git+https://github.com/Dan86de/faber.git"
   },
   "type": "module",
   "bin": {
-    "faber": "./dist/cli.js"
+    "faber": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -33,7 +33,6 @@
     "typescript": "7.0.2"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }
