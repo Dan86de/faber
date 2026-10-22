@@ -25,7 +25,7 @@ const usage = `usage:
   verify.ts interrupt <run> <name>[/<folder>] <INT|HUP> [faber args...]
   verify.ts show <run> <name>[/<file>]
   verify.ts log <run> <name>
-  verify.ts commit <run> <name> <message>
+  verify.ts commit <run> <name> <message> [--empty]
   verify.ts remote <run> <name>
   verify.ts script <run> <claude|gh> <json>
   verify.ts call <run> <name>[/<folder>] <claude|gh> [args...]
@@ -449,20 +449,30 @@ function log(p: Paths, arg: string | undefined): never {
   done(0);
 }
 
-function commitAll(p: Paths, name: string | undefined, message: string | undefined): never {
+// Commits every file in the repo, or with `--empty` no file at all, the way a sign-off by hand does.
+function commitRepo(p: Paths, name: string | undefined, message: string | undefined, flags: string[]): never {
   if (existsSync(p.stopped)) fail("refused: run is stopped; start a new one");
   const t = target(p, name);
   if (t.rel) fail("refused: commit takes a repo name, not a path inside it");
   if (!existsSync(join(t.root, ".git"))) fail(`refused: ${t.name} is not a git repo`);
-  if (!message) fail("refused: give the commit message as one argument");
-  runGit(p, t.root, "add", "-A");
-  const files = runGit(p, t.root, "diff", "--cached", "--name-only").stdout.trim();
-  if (!files) fail(`refused: nothing to commit in ${t.name}`);
-  const commit = runGit(p, t.root, "commit", "-q", "-m", message);
+  if (!message || message.startsWith("--")) fail("refused: give the commit message as one argument");
+  const unknown = flags.filter((flag) => flag !== "--empty");
+  if (unknown.length) fail(`refused: commit takes only --empty after the message, not ${unknown.join(" ")}`);
+  const empty = flags.includes("--empty");
+  let files = "";
+  if (empty) {
+    const dirty = runGit(p, t.root, "status", "--porcelain", "--untracked-files=all").stdout.trim();
+    if (dirty) fail(`refused: --empty needs a clean tree, and ${t.name} has uncommitted changes`);
+  } else {
+    runGit(p, t.root, "add", "-A");
+    files = runGit(p, t.root, "diff", "--cached", "--name-only").stdout.trim();
+    if (!files) fail(`refused: nothing to commit in ${t.name}`);
+  }
+  const commit = runGit(p, t.root, "commit", "-q", ...(empty ? ["--allow-empty"] : []), "-m", message);
   if (commit.status !== 0) fail(`git commit failed: ${commit.stderr.trim()}`);
   const sha = runGit(p, t.root, "rev-parse", "--short", "HEAD").stdout.trim();
   const branch = runGit(p, t.root, "branch", "--show-current").stdout.trim();
-  const count = files.split("\n").length;
+  const count = files ? files.split("\n").length : 0;
   out(`commit: ${sha} ${message.split("\n")[0]} (${branch}, ${count} ${count === 1 ? "file" : "files"})`);
   done(0);
 }
@@ -595,7 +605,7 @@ switch (command) {
     log(openRun(runArg), rest[0]);
     break;
   case "commit":
-    commitAll(openRun(runArg), rest[0], rest[1]);
+    commitRepo(openRun(runArg), rest[0], rest[1], rest.slice(2));
     break;
   case "remote":
     addRemote(openRun(runArg), rest[0]);

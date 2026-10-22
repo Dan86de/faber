@@ -698,3 +698,66 @@ for (const signal of ["SIGINT", "SIGHUP"] as const) {
     assert.equal(f.calls("claude").length, 1);
   });
 }
+
+test("faber run resumes from git on each rerun, starting a stopped session once per run", (t) => {
+  const f = fakes(t);
+  const { repo } = readyRepo(t);
+  const prompts = (from: number) =>
+    f
+      .calls("claude")
+      .slice(from)
+      .map((call) => call.argv[1]);
+  const slices = JSON.stringify({ slices: [{ id: "S1" }, { id: "S2", blocked_by: ["S1"] }] });
+  // Each run: the fake's script, the sessions it should start, how its output ends, and its limits.
+  const runs: [unknown[], string[], RegExp, string[]?][] = [
+    [
+      [{ write: { "spec/features/demo/spec.md": "# Spec\n" } }, {}],
+      ["/write-spec spec/features/demo/decisions.md", "/write-slices spec/features/demo/spec.md"],
+      /\nstopped: write-slices wrote nothing\n$/,
+    ],
+    [
+      [{ write: { "spec/features/demo/slices.json": `${slices}\n` } }, builds("S1"), { hang: true }],
+      ["/write-slices spec/features/demo/spec.md", "S1", "S2"],
+      /\nstopped: S2 ran past \.01 minutes\n$/,
+      ["--timeout=.01"],
+    ],
+    [[{}], ["S2"], /\nstopped: S2 committed nothing\n$/],
+    [[builds("S2")], ["S2"], /\nstopped: closing the branch is not built yet\n$/],
+  ];
+  for (const [script, started, end, limits = []] of runs) {
+    const from = f.calls("claude").length;
+    f.script("claude", script);
+    const result = runFaberWithFakes(f, repo, "run", "demo", ...limits);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, end);
+    const expected = started.map((p) =>
+      p.startsWith("/") ? p : `/implement-slice spec/features/demo/slices.json ${p}`,
+    );
+    assert.deepEqual(prompts(from), expected);
+  }
+  assert.equal(
+    git(repo, "log", "--format=%s", "main..HEAD").stdout,
+    "Build S2\nBuild S1\nCut demo into slices\nWrite the spec for demo\n",
+  );
+});
+
+test("faber run goes on past a slice signed off by hand since the last run", (t) => {
+  const f = fakes(t);
+  const { repo } = builtRepo(t);
+  f.script("claude", [builds("S1", "Slice-Pending: S1"), builds("S10")]);
+  assert.match(runFaberWithFakes(f, repo, "run", "demo").stdout, /\nstopped: S1 waits for sign-off\n$/);
+  git(repo, "commit", "-q", "--allow-empty", "-m", "Sign off S1\n\nSlice: S1");
+  f.script("claude", [builds("S2")]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.deepEqual(result.stdout.split("\n").slice(1), [
+    "on slices/demo",
+    "S2: started",
+    "S2: ended, exit 0, 1 tool call",
+    "stopped: closing the branch is not built yet",
+    "",
+  ]);
+  assert.deepEqual(
+    f.calls("claude").map((call) => call.argv[1]),
+    ["S1", "S10", "S2"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`),
+  );
+});

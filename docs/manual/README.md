@@ -48,4 +48,5 @@ Only user paths, handles, commands, state and what proves it: no implementation 
 - [Go on past a sign-off](./run-signoff.md): `faber run <slug>` goes on past a slice that adds `Slice-Pending:` with every slice that does not depend on it, and ends listing every slice that waits for sign-off.
 - [Stop on a failed session](./run-limits.md): `faber run <slug>` stops when a session exits non-zero, hits a permission denial, or passes `--timeout` or `--max-tools`, killing it if it still runs.
 - [Stop on an interrupt](./run-interrupt.md): Ctrl-C or a closed terminal during `faber run <slug>` kills the running session, leaves the tree, and ends with `stopped: interrupted`.
+- [Resume a stopped run](./run-resume.md): `faber run <slug>` again after a stop, a kill or a sign-off made by hand resumes from git, repeating no step git records and starting no session twice in a run.
 - [Install](./install.md): faber installed from its npm package runs `faber init` with no checkout of this repo.

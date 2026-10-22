@@ -139,11 +139,13 @@ A faber that never ends is killed after 10 seconds, as with `faber`.
 Commit the files a step expects to be committed, and give a repo a remote to push to:
 
 ```bash
-.agents/skills/verify/verify.ts commit <run> <name> <message>
+.agents/skills/verify/verify.ts commit <run> <name> <message> [--empty]
 .agents/skills/verify/verify.ts remote <run> <name>
 ```
 
 `commit` stages every file in the repo, commits it with the message, and prints `commit: <short sha> <subject> (<branch>, <n> file[s])`; it refuses a repo with nothing to commit.
+With `--empty` it stages nothing and makes a commit with no files, the way a sign-off by hand does, and prints `0 files`; it refuses a repo with uncommitted changes.
+A message can hold line breaks, so trailers such as `Slice: S1` go after a blank line in the one argument.
 `remote` makes the bare repo `<run>/remotes/<name>.git`, adds it as `origin`, pushes every branch the repo has with upstreams set, and prints `remote: origin -> <path>, pushed <branches | nothing yet>`.
 Make the setup commits first, then the remote, the way a user's repo already has its default branch on GitHub.
 
