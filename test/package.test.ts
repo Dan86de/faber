@@ -42,7 +42,14 @@ test("faber installed from a packed tarball runs init from node_modules", (t) =>
   );
 
   // npm publish rewrites a package.json it finds invalid, such as a bin path it rejects, and npm pack does not.
-  const publish = npm(repoRoot, scratch, "publish", "--dry-run");
+  // A throwaway prerelease of the unpacked tarball, offline and with scripts skipped, keeps the registry out of it.
+  const unpacked = join(scratch, "unpacked");
+  mkdirSync(unpacked);
+  const untar = spawnSync("tar", ["-xzf", join(scratch, filename), "-C", unpacked], { encoding: "utf8" });
+  assert.equal(untar.status, 0, untar.stderr);
+  const pkg = join(unpacked, "package");
+  npm(pkg, scratch, "pkg", "set", "version=0.0.0-publish-check");
+  const publish = npm(pkg, scratch, "publish", "--dry-run", "--ignore-scripts", "--offline", "--tag", "publish-check");
   assert.ok(!publish.stderr.includes("auto-corrected"), publish.stderr);
 
   const app = join(scratch, "app");
