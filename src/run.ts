@@ -76,14 +76,16 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     return 1;
   };
 
-  const spec = `${feature}/spec.md`;
-  if (!committedAt(root, "HEAD", spec)) {
-    const phase = "write-spec";
+  // A planning phase runs while its file is not committed on the branch; faber commits only that file, since the
+  // skill leaves the commit to a user who is not there, and stops on anything else the session touched. It returns
+  // the stop's exit code, or undefined when the run goes on, whether the phase ran or git already records it.
+  const plan = async (phase: string, input: string, file: string, subject: string) => {
+    if (committedAt(root, "HEAD", file)) return undefined;
     const before = headCommit(root);
     say(`${phase}: started`);
     const session = await runSession({
       skill: phase,
-      args: `${feature}/decisions.md`,
+      args: input,
       cwd: root,
       transcript: join(root, folder, `${phase}.jsonl`),
     });
@@ -92,19 +94,25 @@ export async function run(cwd: string, args: string[], output: RunOutput): Promi
     const touched = touchedSince(root, before);
     if ("error" in touched) return stop(touched.error, session.lastMessage);
     if (touched.paths.length === 0) return stop(`${phase} wrote nothing`, session.lastMessage);
-    // The session may write the spec but never commit it: faber makes the one commit it can prove.
-    const stray = touched.paths.find((path) => path !== spec);
+    const stray = touched.paths.find((path) => path !== file);
     if (stray !== undefined) return stop(`${phase} touched ${stray}`, session.lastMessage);
     if (headCommit(root) !== before) return stop(`${phase} committed on its own`, session.lastMessage);
-    const committed = commitPath(root, spec, `Write the spec for ${slug}`);
+    const committed = commitPath(root, file, subject);
     if (committed) return stop(committed.error);
-    say(`committed ${spec}`);
+    say(`committed ${file}`);
     const pushed = pushBranch(root, branch);
     if (pushed) return stop(pushed.error);
     say(`pushed ${branch}`);
-  }
-  // Cutting the slices lands in the next slice; until then a run with a committed spec stops here.
-  return stop("write-slices is not built yet");
+    return undefined;
+  };
+
+  const spec = `${feature}/spec.md`;
+  const stopped =
+    (await plan("write-spec", `${feature}/decisions.md`, spec, `Write the spec for ${slug}`)) ??
+    (await plan("write-slices", spec, `${feature}/slices.json`, `Cut ${slug} into slices`));
+  if (stopped !== undefined) return stopped;
+  // Building the slices lands in the next slice; until then a run with both planning files stops here.
+  return stop("implement-slice is not built yet");
 }
 
 // Makes `<runs><timestamp>/` in UTC, with a counter when two runs start in the same second, and returns it.

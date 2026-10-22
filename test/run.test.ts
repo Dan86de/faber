@@ -158,7 +158,10 @@ test("faber run refuses when git does not ignore its run folder", (t) => {
 test("faber run writes the spec in a session, then commits and pushes only spec.md", (t) => {
   const f = fakes(t);
   const { repo, bare } = readyRepo(t);
-  f.script("claude", [{ write: { "spec/features/demo/spec.md": "# Spec\n" }, tools: 2, message: "Wrote it." }]);
+  f.script("claude", [
+    { write: { "spec/features/demo/spec.md": "# Spec\n" }, tools: 2, message: "Wrote it." },
+    { write: { "spec/features/demo/slices.json": "{}\n" }, tools: 1, message: "Cut it." },
+  ]);
   const result = runFaberWithFakes(f, repo, "run", "demo");
   const lines = result.stdout.split("\n");
   const folder = lines[0] as string;
@@ -169,29 +172,35 @@ test("faber run writes the spec in a session, then commits and pushes only spec.
     "write-spec: ended, exit 0, 2 tool calls",
     "committed spec/features/demo/spec.md",
     "pushed slices/demo",
-    "stopped: write-slices is not built yet",
+    "write-slices: started",
+    "write-slices: ended, exit 0, 1 tool call",
+    "committed spec/features/demo/slices.json",
+    "pushed slices/demo",
+    "stopped: implement-slice is not built yet",
     "",
   ]);
   assert.equal(result.status, 1);
   assert.equal(result.stderr, "");
 
-  const [call, ...more] = f.calls("claude");
-  assert.equal(more.length, 0);
-  assert.deepEqual(call?.argv, [
-    "-p",
-    "/write-spec spec/features/demo/decisions.md",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    "auto",
-  ]);
-  assert.equal(call?.stdin, "closed");
-  assert.equal(call?.cwd, realpathSync(repo));
+  const flags = ["--output-format", "stream-json", "--verbose", "--permission-mode", "auto"];
+  const calls = f.calls("claude");
+  assert.deepEqual(
+    calls.map((call) => call.argv),
+    [
+      ["-p", "/write-spec spec/features/demo/decisions.md", ...flags],
+      ["-p", "/write-slices spec/features/demo/spec.md", ...flags],
+    ],
+  );
+  for (const call of calls) {
+    assert.equal(call.stdin, "closed");
+    assert.equal(call.cwd, realpathSync(repo));
+  }
 
   assert.equal(git(repo, "branch", "--show-current").stdout, "slices/demo\n");
-  assert.equal(git(repo, "log", "-1", "--format=%s").stdout, "Write the spec for demo\n");
-  assert.equal(git(repo, "show", "--name-only", "--format=", "HEAD").stdout, "spec/features/demo/spec.md\n");
+  assert.equal(
+    git(repo, "log", "--format=%s", "--name-only", "main..HEAD").stdout,
+    "Cut demo into slices\n\nspec/features/demo/slices.json\nWrite the spec for demo\n\nspec/features/demo/spec.md\n",
+  );
   assert.equal(git(bare, "rev-parse", "slices/demo").stdout, git(repo, "rev-parse", "HEAD").stdout);
   assert.equal(git(repo, "status", "--porcelain").stdout, "");
 
@@ -201,20 +210,22 @@ test("faber run writes the spec in a session, then commits and pushes only spec.
     .split("\n");
   assert.equal(JSON.parse(transcript[0] as string).type, "system");
   assert.equal(JSON.parse(transcript.at(-1) as string).type, "result");
-  assert.deepEqual(readdirSync(join(repo, folder)).sort(), ["run.log", "write-spec.jsonl"]);
+  assert.deepEqual(readdirSync(join(repo, folder)).sort(), ["run.log", "write-slices.jsonl", "write-spec.jsonl"]);
 });
 
-test("faber run switches to an existing slices branch and skips a committed spec", (t) => {
+test("faber run switches to an existing slices branch and skips committed planning files", (t) => {
   const f = fakes(t);
   const { repo } = readyRepo(t);
   git(repo, "switch", "-q", "-c", "slices/demo");
   put(repo, "spec/features/demo/spec.md", "# Spec\n");
   commitAll(repo, "Write the spec for demo");
+  put(repo, "spec/features/demo/slices.json", "{}\n");
+  commitAll(repo, "Cut demo into slices");
   git(repo, "switch", "-q", "main");
   const result = runFaberWithFakes(f, repo, "run", "demo");
   assert.deepEqual(result.stdout.split("\n").slice(1), [
     "on slices/demo",
-    "stopped: write-slices is not built yet",
+    "stopped: implement-slice is not built yet",
     "",
   ]);
   assert.equal(f.calls("claude").length, 0);
@@ -232,10 +243,11 @@ test("faber run stops when write-spec fails, and commits nothing", (t) => {
   assert.equal(git(repo, "status", "--porcelain").stdout, "?? spec/features/demo/spec.md\n");
 });
 
-// Runs one scripted write-spec session in a ready repo and returns the run and the commit it started from.
-function stopsAfter(t: Parameters<typeof tempRepo>[0], session: Record<string, unknown>) {
+// Runs one scripted session in the repo `setup` makes, a ready repo by default, and returns the run and the commit
+// it started from.
+function stopsAfter(t: Parameters<typeof tempRepo>[0], session: Record<string, unknown>, setup = readyRepo) {
   const f = fakes(t);
-  const { repo } = readyRepo(t);
+  const { repo } = setup(t);
   const before = git(repo, "rev-parse", "HEAD").stdout;
   f.script("claude", [{ message: "Last words.", ...session }]);
   return { repo, before, result: runFaberWithFakes(f, repo, "run", "demo") };
@@ -282,4 +294,84 @@ test("faber run stops at the push when the repo has no remote, keeping the spec 
   assert.match(lines.at(-1) as string, /^stopped: git push failed: fatal: /);
   assert.equal(lines.filter((line) => line.startsWith("stopped: ")).length, 1);
   assert.equal(git(repo, "log", "-1", "--format=%s").stdout, "Write the spec for demo\n");
+});
+
+// A ready repo whose default branch also holds the spec, so the next run starts at write-slices.
+function specRepo(t: Parameters<typeof tempRepo>[0]) {
+  const ready = readyRepo(t);
+  put(ready.repo, "spec/features/demo/spec.md", "# Spec\n");
+  commitAll(ready.repo, "Write the spec for demo");
+  git(ready.repo, "push", "-q", "origin", "main");
+  return ready;
+}
+
+test("faber run cuts the slices from a committed spec, then commits and pushes only slices.json", (t) => {
+  const f = fakes(t);
+  const { repo, bare } = specRepo(t);
+  const before = git(repo, "rev-parse", "HEAD").stdout;
+  f.script("claude", [{ write: { "spec/features/demo/slices.json": "{}\n" }, tools: 3 }]);
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.stderr, "");
+  assert.deepEqual(result.stdout.split("\n").slice(1), [
+    "created slices/demo from main",
+    "write-slices: started",
+    "write-slices: ended, exit 0, 3 tool calls",
+    "committed spec/features/demo/slices.json",
+    "pushed slices/demo",
+    "stopped: implement-slice is not built yet",
+    "",
+  ]);
+  assert.deepEqual(
+    f.calls("claude").map((call) => call.argv[1]),
+    ["/write-slices spec/features/demo/spec.md"],
+  );
+  assert.equal(git(repo, "rev-parse", "HEAD~1").stdout, before);
+  assert.equal(git(repo, "log", "-1", "--format=%s").stdout, "Cut demo into slices\n");
+  assert.equal(git(repo, "show", "--name-only", "--format=", "HEAD").stdout, "spec/features/demo/slices.json\n");
+  assert.equal(git(bare, "rev-parse", "slices/demo").stdout, git(repo, "rev-parse", "HEAD").stdout);
+});
+
+// Runs one scripted write-slices session after a committed spec, with a two-line last message.
+function slicesStopAfter(t: Parameters<typeof tempRepo>[0], session: Record<string, unknown>) {
+  return stopsAfter(t, { message: "Last words.\nSecond line.", ...session }, specRepo);
+}
+
+test("faber run stops when write-slices touches another path, and leaves the tree", (t) => {
+  const write = { "spec/features/demo/slices.json": "{}\n", "spec/features/demo/spec.md": "# Changed\n" };
+  const { repo, before, result } = slicesStopAfter(t, { write });
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /\n\| Last words\.\n\| Second line\.\nstopped: write-slices touched spec\/features\/demo\/spec\.md\n$/,
+  );
+  assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+  assert.equal(
+    git(repo, "status", "--porcelain", "--untracked-files=all").stdout,
+    " M spec/features/demo/spec.md\n?? spec/features/demo/slices.json\n",
+  );
+});
+
+test("faber run stops when write-slices writes nothing", (t) => {
+  const { repo, before, result } = slicesStopAfter(t, {});
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\n\| Second line\.\nstopped: write-slices wrote nothing\n$/);
+  assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+  assert.equal(git(repo, "status", "--porcelain", "--untracked-files=all").stdout, "");
+});
+
+test("faber run stops when write-slices exits non-zero, with one status line", (t) => {
+  const { repo, before, result } = slicesStopAfter(t, { exit: 2 });
+  assert.equal(result.status, 1);
+  const lines = result.stdout.trimEnd().split("\n");
+  assert.deepEqual(lines.slice(-3), ["| Last words.", "| Second line.", "stopped: write-slices exited 2"]);
+  assert.equal(lines.filter((line) => line.startsWith("stopped: ")).length, 1);
+  assert.equal(git(repo, "rev-parse", "HEAD").stdout, before);
+});
+
+test("faber run stops when write-slices commits on its own", (t) => {
+  const write = { "spec/features/demo/slices.json": "{}\n" };
+  const { repo, before, result } = slicesStopAfter(t, { write, commit: { message: "Sneak it in" } });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\nstopped: write-slices committed on its own\n$/);
+  assert.notEqual(git(repo, "rev-parse", "HEAD").stdout, before);
 });

@@ -140,8 +140,8 @@ test("fake claude records a stdin left open", (t) => {
   const f = fakes(t);
   const repo = tempRepo(t);
   f.script("claude", [{}]);
-  const sh = `exec claude ${headless.map((word) => `'${word}'`).join(" ")} < /dev/stdin`;
-  runOnPath(f, repo, "sh", ["-c", `sleep 1 | (${sh})`]);
+  // `yes` holds the pipe open until the fake exits, however long the fake takes to start.
+  runOnPath(f, repo, "sh", ["-c", `yes | claude ${headless.map((word) => `'${word}'`).join(" ")}`]);
   assert.equal(f.calls("claude")[0]?.stdin, "open");
 });
 
