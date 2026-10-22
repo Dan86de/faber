@@ -11,6 +11,12 @@ Read `README.md` for the boundary before changing anything.
 - Decide state from git, never by parsing an agent's reply.
 - Every harness-specific call goes through its adapter.
 
+## Verify
+
+A change the feature map in `docs/manual/` describes is done only when a verify run's `evidence.md` has no failed check.
+Run the `verify` skill in `.agents/skills/verify/` for it.
+The map changes in the same PR as the behaviour.
+
 ## Planning
 
 This repo dogfoods the skills: decisions, specs and slices live in `spec/features/<slug>/`.

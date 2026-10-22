@@ -1,0 +1,5 @@
+interface:
+  display_name: "Verify"
+  short_description: "Run faber in throwaway repos inside a run folder, drive it, and record evidence"
+policy:
+  allow_implicit_invocation: true
