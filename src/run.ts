@@ -15,6 +15,7 @@ import {
   switchBranch,
   touchedSince,
 } from "./git.ts";
+import { pullRequest } from "./github.ts";
 import { type Limits, runSession, type SessionResult } from "./harness/claude.ts";
 import { nextReady, parseSlices, waiting } from "./slices.ts";
 
@@ -29,6 +30,9 @@ const flags = { timeout: { type: "string" }, "max-tools": { type: "string" } } a
 
 // Where a run's lines go: a refusal before the run folder exists goes to stderr, everything after to stdout and run.log.
 export type RunOutput = { refuse(line: string): void; print(line: string): void };
+
+// The session that closes the branch once every slice is done, as its start line and transcript name it.
+const closing = "close-branch";
 
 // A feature slug, the folder name under `spec/features/`.
 const slugPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -179,8 +183,16 @@ export async function run(cwd: string, args: string[], output: RunOutput, interr
     const blocked = left.map(({ id, openBlockers }) => `${id} waits for ${openBlockers.join(", ")}`);
     return stop(["no slice is ready", ...blocked].join("\n"));
   }
-  // Closing the branch lands in a later slice; until then a run with every slice done stops here.
-  return stop("closing the branch is not built yet");
+  // With every slice done, one more implement-slice session closes the branch and marks its PR ready. Whether the
+  // PR is ready lives on GitHub, not in git, so faber asks gh, and only for the run's last line.
+  const session = await start(closing, "implement-slice", slicesFile);
+  const closeFailed = failed(closing, session);
+  if (closeFailed) return stop(closeFailed, session.lastMessage);
+  const pr = pullRequest(root, branch);
+  if ("error" in pr) return stop(pr.error, session.lastMessage);
+  if (pr.isDraft) return stop(`the PR is still a draft: ${pr.url}`, session.lastMessage);
+  say(`done: PR ready ${pr.url}`);
+  return 0;
 }
 
 // The slug and limits `args` give, each limit as typed for the status line, or the line that refuses them.

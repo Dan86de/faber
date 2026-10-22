@@ -397,6 +397,10 @@ function builtRepo(t: Parameters<typeof tempRepo>[0], slices = threeSlices) {
   return ready;
 }
 
+// The PR a fake gh reports, and the prompt of the session that closes the branch.
+const prUrl = "https://github.com/owner/demo/pull/7";
+const closePrompt = "/implement-slice spec/features/demo/slices.json";
+
 // A fake implement-slice session that builds `id` and commits it with `trailer`.
 function builds(id: string, trailer = `Slice: ${id}`) {
   return { write: { [`${id}.txt`]: `${id}\n` }, commit: { message: `Build ${id}`, trailers: [trailer] }, tools: 1 };
@@ -405,7 +409,8 @@ function builds(id: string, trailer = `Slice: ${id}`) {
 test("faber run builds each ready slice in its own session while a Slice trailer lands", (t) => {
   const f = fakes(t);
   const { repo } = builtRepo(t);
-  f.script("claude", [builds("S1"), builds("S2"), builds("S10")]);
+  f.script("claude", [builds("S1"), builds("S2"), builds("S10"), {}]);
+  f.script("gh", { pr: { url: prUrl, isDraft: false } });
   const result = runFaberWithFakes(f, repo, "run", "demo");
   assert.equal(result.stderr, "");
   const lines = result.stdout.split("\n");
@@ -418,18 +423,26 @@ test("faber run builds each ready slice in its own session while a Slice trailer
     "S2: ended, exit 0, 1 tool call",
     "S10: started",
     "S10: ended, exit 0, 1 tool call",
-    "stopped: closing the branch is not built yet",
+    "close-branch: started",
+    "close-branch: ended, exit 0, 0 tool calls",
+    `done: PR ready ${prUrl}`,
     "",
   ]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0);
   const calls = f.calls("claude");
   assert.deepEqual(
     calls.map((call) => call.argv[1]),
-    ["S1", "S2", "S10"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`),
+    [...["S1", "S2", "S10"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`), closePrompt],
   );
   for (const call of calls) assert.equal(call.stdin, "closed");
   assert.equal(git(repo, "log", "--format=%s", "-3").stdout, "Build S10\nBuild S2\nBuild S1\n");
-  assert.deepEqual(readdirSync(join(repo, folder)).sort(), ["S1.jsonl", "S10.jsonl", "S2.jsonl", "run.log"]);
+  assert.deepEqual(readdirSync(join(repo, folder)).sort(), [
+    "S1.jsonl",
+    "S10.jsonl",
+    "S2.jsonl",
+    "close-branch.jsonl",
+    "run.log",
+  ]);
   assert.equal(readFileSync(join(repo, folder, "run.log"), "utf8"), result.stdout);
 });
 
@@ -722,7 +735,11 @@ test("faber run resumes from git on each rerun, starting a stopped session once 
       ["--timeout=.01"],
     ],
     [[{}], ["S2"], /\nstopped: S2 committed nothing\n$/],
-    [[builds("S2")], ["S2"], /\nstopped: closing the branch is not built yet\n$/],
+    [
+      [builds("S2"), { message: "Branch closed." }],
+      ["S2", closePrompt],
+      /\n\| Branch closed\.\nstopped: gh pr view failed: .+\n$/,
+    ],
   ];
   for (const [script, started, end, limits = []] of runs) {
     const from = f.calls("claude").length;
@@ -747,17 +764,98 @@ test("faber run goes on past a slice signed off by hand since the last run", (t)
   f.script("claude", [builds("S1", "Slice-Pending: S1"), builds("S10")]);
   assert.match(runFaberWithFakes(f, repo, "run", "demo").stdout, /\nstopped: S1 waits for sign-off\n$/);
   git(repo, "commit", "-q", "--allow-empty", "-m", "Sign off S1\n\nSlice: S1");
-  f.script("claude", [builds("S2")]);
+  f.script("claude", [builds("S2"), {}]);
+  f.script("gh", { pr: { url: prUrl, isDraft: false } });
   const result = runFaberWithFakes(f, repo, "run", "demo");
   assert.deepEqual(result.stdout.split("\n").slice(1), [
     "on slices/demo",
     "S2: started",
     "S2: ended, exit 0, 1 tool call",
-    "stopped: closing the branch is not built yet",
+    "close-branch: started",
+    "close-branch: ended, exit 0, 0 tool calls",
+    `done: PR ready ${prUrl}`,
     "",
   ]);
+  assert.equal(result.status, 0);
   assert.deepEqual(
     f.calls("claude").map((call) => call.argv[1]),
-    ["S1", "S10", "S2"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`),
+    [...["S1", "S10", "S2"].map((id) => `/implement-slice spec/features/demo/slices.json ${id}`), closePrompt],
   );
+});
+
+// A repo on `slices/demo` whose every slice already has its `Slice:` trailer, so the next run closes the branch.
+function doneRepo(t: Parameters<typeof tempRepo>[0]) {
+  const ready = builtRepo(t, JSON.stringify({ slices: [{ id: "S1" }] }));
+  git(ready.repo, "commit", "-q", "--allow-empty", "-m", "Build S1\n\nSlice: S1");
+  return ready;
+}
+
+test("faber run closes the branch once every slice is done and ends on the ready PR", (t) => {
+  const f = fakes(t);
+  const { repo } = doneRepo(t);
+  f.script("claude", [{ write: { "review.txt": "ok\n" }, commit: { message: "Address review" }, tools: 2 }]);
+  f.script("gh", { pr: { url: prUrl, isDraft: false } });
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.stderr, "");
+  assert.deepEqual(result.stdout.split("\n").slice(1), [
+    "on slices/demo",
+    "close-branch: started",
+    "close-branch: ended, exit 0, 2 tool calls",
+    `done: PR ready ${prUrl}`,
+    "",
+  ]);
+  assert.equal(result.status, 0);
+  assert.deepEqual(
+    f.calls("claude").map((call) => call.argv[1]),
+    [closePrompt],
+  );
+  const gh = f.calls("gh");
+  assert.deepEqual(
+    gh.map((call) => call.argv),
+    [["pr", "view", "slices/demo", "--json", "url,isDraft"]],
+  );
+  assert.equal(gh[0]?.stdin, "closed");
+  assert.equal(realpathSync(gh[0]?.cwd as string), realpathSync(repo));
+});
+
+test("faber run stops when the PR is still a draft after closing the branch", (t) => {
+  const f = fakes(t);
+  const { repo } = doneRepo(t);
+  f.script("claude", [{ message: "Review blocks.\nLeft the PR as a draft." }]);
+  f.script("gh", { pr: { url: prUrl, isDraft: true } });
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    new RegExp(
+      `\\n\\| Review blocks\\.\\n\\| Left the PR as a draft\\.\\nstopped: the PR is still a draft: ${prUrl}\\n$`,
+    ),
+  );
+});
+
+test("faber run stops when gh finds no PR after closing the branch", (t) => {
+  const f = fakes(t);
+  const { repo } = doneRepo(t);
+  f.script("claude", [{}]);
+  f.script("gh", {});
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /\n\| Done\.\nstopped: gh pr view failed: no pull requests found for the current branch\n$/,
+  );
+});
+
+test("faber run stops when the closing session fails, and reads no PR", (t) => {
+  const f = fakes(t);
+  const { repo } = doneRepo(t);
+  f.script("claude", [{ message: "Could not push.", exit: 2 }]);
+  f.script("gh", { pr: { url: prUrl, isDraft: false } });
+  const result = runFaberWithFakes(f, repo, "run", "demo");
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /\nclose-branch: ended, exit 2, 0 tool calls\n\| Could not push\.\nstopped: close-branch exited 2\n$/,
+  );
+  assert.equal(f.calls("gh").length, 0);
 });
